@@ -1,8 +1,5 @@
 # ccs-scripts
 
-![Python Version](https://img.shields.io/badge/python-3.8%20|%203.9%20|%203.10-blue.svg)
-[![License: GPL v3](https://img.shields.io/github/license/equinor/subscript)](https://www.gnu.org/licenses/gpl-3.0)
-
 :scroll: **ccs-scripts** gathers a collection of post-processing scripts dedicated to CCS outputs from Eclipse and Pflotran.
 
 >Note: These scripts are beeing tested and frequently updated, new releases will be available occasionally :recycle:
