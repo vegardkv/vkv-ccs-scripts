@@ -13,7 +13,10 @@ import numpy as np
 import pandas as pd
 import shapely.geometry
 
-from ccs_scripts.co2_containment.calculate import ContainedCo2, calculate_co2_containment
+from ccs_scripts.co2_containment.calculate import (
+    ContainedCo2,
+    calculate_co2_containment,
+)
 from ccs_scripts.co2_containment.co2_calculation import (
     CalculationType,
     Co2Data,
