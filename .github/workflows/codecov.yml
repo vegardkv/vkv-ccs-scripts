@@ -44,7 +44,7 @@ jobs:
 
     - name: Generate coverage report
       run: |
-        pytest tests --disable-warnings --cov=ccs-scripts --cov-report=xml
+        pytest tests --disable-warnings --cov=ccs_scripts --cov-report=xml
 
     - name: Upload coverage to Codecov
       run: |
