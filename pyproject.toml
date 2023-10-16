@@ -75,9 +75,9 @@ Repository = "https://github.com/equinor/ccs_scripts"
 # Documentation = "https://equinor.github.io/ccs_scripts"
 
 [project.scripts]
-co2_containment = "subscript.co2_containment.co2_containment:main"
-co2_plume_area = "subscript.co2_plume.plume_area:main"
-co2_plume_extent = "subscript.co2_plume.plume_extent:main"
+co2_containment = "ccs_scripts.co2_containment.co2_containment:main"
+co2_plume_area = "ccs_scripts.co2_plume.plume_area:main"
+co2_plume_extent = "ccs_scripts.co2_plume.plume_extent:main"
 
 # [project.entry-points.ert]
 # subscript_jobs = "subscript.hook_implementations.jobs"
