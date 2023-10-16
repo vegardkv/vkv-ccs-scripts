@@ -7,7 +7,7 @@ requires = [
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools_scm]
-write_to = "src/version.py"
+write_to = "src/ccs_scripts/version.py"
 
 [project]
 name = "ccs-scripts"
