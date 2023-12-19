@@ -6,7 +6,7 @@
 
 
 ---
-## Functionnalities
+## Functionalities
 
 ### Available in the repositoy
 
