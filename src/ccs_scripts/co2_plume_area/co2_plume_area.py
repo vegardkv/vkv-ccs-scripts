@@ -196,10 +196,10 @@ def _log_input_configuration(input_path: str, output_path: str) -> None:
     logging.info(f"User                : {getpass.getuser()}")
     logging.info(f"Host                : {socket.gethostname()}")
     logging.info(f"Platform            : {platform.system()} ({platform.release()})")
-    logging.info(
-        f"Python version      : \
-        {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    py_version = (
+        f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
     )
+    logging.info(f"Python version      : {py_version}")
 
     logging.info(f"\nInput path  : {input_path}")
     logging.info(f"Output path : {output_path}\n")

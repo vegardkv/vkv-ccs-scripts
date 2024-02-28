@@ -527,10 +527,10 @@ def log_input_configuration(arguments_processed: argparse.Namespace) -> None:
     logging.info(f"User                : {getpass.getuser()}")
     logging.info(f"Host                : {socket.gethostname()}")
     logging.info(f"Platform            : {platform.system()} ({platform.release()})")
-    logging.info(
-        f"Python version      : {sys.version_info.major}.\
-        {sys.version_info.minor}.{sys.version_info.micro}"
+    py_version = (
+        f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
     )
+    logging.info(f"Python version      : {py_version}")
 
     logging.info(f"\nCase                : {arguments_processed.case}")
     logging.info(f"Calculation type    : {arguments_processed.calc_type_input}")
@@ -555,27 +555,22 @@ def log_summary_of_results(df: pd.DataFrame) -> None:
     logging.info(f"Last date           : {df['date'].iloc[-1]}")
     logging.info(f"End state total     : {df['total'].iloc[-1]:.1f}")
     if "total_gas" in df:
-        logging.info(
-            f"End state gaseous   : {df['total_gas'].iloc[-1]:.1f} \
-            ({(100.0 * df['total_gas'].iloc[-1] / df['total'].iloc[-1]):.1f} %)"
-        )
+        value = df["total_gas"].iloc[-1]
+        percent = 100.0 * value / df["total"].iloc[-1]
+        logging.info(f"End state gaseous   : {value:.1f}  ({percent:.1f} %)")
     if "total_aqueous" in df:
-        logging.info(
-            f"End state aqueous   : {df['total_aqueous'].iloc[-1]:.1f} \
-            ({(100.0 * df['total_aqueous'].iloc[-1] / df['total'].iloc[-1]):.1f} %)"
-        )
-    logging.info(
-        f"End state contained : {df['total_contained'].iloc[-1]:.1f} \
-        ({(100.0 * df['total_contained'].iloc[-1] / df['total'].iloc[-1]):.1f} %)"
-    )
-    logging.info(
-        f"End state outside   : {df['total_outside'].iloc[-1]:.1f} \
-        ({(100.0 * df['total_outside'].iloc[-1] / df['total'].iloc[-1]):.1f} %)"
-    )
-    logging.info(
-        f"End state hazardous : {df['total_hazardous'].iloc[-1]:.1f} \
-        ({(100.0 * df['total_hazardous'].iloc[-1] / df['total'].iloc[-1]):.1f} %)"
-    )
+        value = df["total_aqueous"].iloc[-1]
+        percent = 100.0 * value / df["total"].iloc[-1]
+        logging.info(f"End state aqueous   : {value:.1f}  ({percent:.1f} %)")
+    value = df["total_contained"].iloc[-1]
+    percent = 100.0 * value / df["total"].iloc[-1]
+    logging.info(f"End state contained : {value:.1f}  ({percent:.1f} %)")
+    value = df["total_outside"].iloc[-1]
+    percent = 100.0 * value / df["total"].iloc[-1]
+    logging.info(f"End state outside   : {value:.1f}  ({percent:.1f} %)")
+    value = df["total_hazardous"].iloc[-1]
+    percent = 100.0 * value / df["total"].iloc[-1]
+    logging.info(f"End state hazardous : {value:.1f}  ({percent:.1f} %)")
     if "zone" in df:
         logging.info("Split into zones?   : yes")
         unique_zones = df["zone"].unique()
