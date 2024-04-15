@@ -42,7 +42,8 @@ dependencies = [
     "scipy",
     "shapely",
     "xtgeo",
-    "pyyaml"
+    "pyyaml",
+    "grid3d-maps"
 ]
 
 [project.optional-dependencies]
