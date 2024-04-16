@@ -16,9 +16,9 @@ def expected_jobs():
     """dictionary of installed jobs with location to config"""
     expected_job_names = [
         "CO2_CONTAINMENT",
-        # "CO2_MASS_MAPS",
-        "PLUME_AREA",
-        "PLUME_EXTENT",
+        "CO2_MASS_MAPS",
+        "CO2_PLUME_AREA",
+        "CO2_PLUME_EXTENT",
     ]
     return {
         name: path.join(path.dirname(ccs_scripts.__file__), "config_jobs", name)
