@@ -519,7 +519,7 @@ def process_zonefile_if_yaml(zonefile: str) -> Optional[Dict[str, List[int]]]:
 
 def log_input_configuration(arguments_processed: argparse.Namespace) -> None:
     version = "v0.5.0"
-    is_dev_version = True
+    is_dev_version = False
     if is_dev_version:
         version += "_dev"
         try:
