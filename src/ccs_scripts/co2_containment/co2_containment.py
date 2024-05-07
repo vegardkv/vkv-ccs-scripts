@@ -323,14 +323,20 @@ def get_parser() -> argparse.ArgumentParser:
         default=None,
     )
     parser.add_argument(
-        "--zonefile", help="Path to file containing zone information.", default=None
+        "--zonefile",
+        help="Path to yaml or roff file containing zone information.",
+        default=None,
     )
     parser.add_argument(
-        "--regionfile", help="Path to file containing region information.", default=None
+        "--regionfile",
+        help="Path to roff file containing region information. "
+        "Use either 'regionfile' or 'region_property', not both.",
+        default=None,
     )
     parser.add_argument(
         "--region_property",
-        help="Property in INIT file containing integer grid of regions.",
+        help="Property in INIT file containing integer grid of regions. "
+        "Use either 'regionfile' or 'region_property', not both.",
         default=None,
     )
     parser.add_argument(
@@ -376,7 +382,7 @@ def _replace_default_dummies_from_ert(args):
 
 
 class InputError(Exception):
-    """Raised when relative paths are provided when absolute ones are expected"""
+    """Raised for various mistakes in the provided input."""
 
 
 def process_args() -> argparse.Namespace:
@@ -475,6 +481,12 @@ def check_input(arguments: argparse.Namespace):
             error_text += "\n  * " + file
         raise FileNotFoundError(error_text)
 
+    if arguments.regionfile is not None and arguments.region_property is not None:
+        raise InputError(
+            "Both 'regionfile' and 'region_property' have been provided. "
+            "Please provide only one of the two options."
+        )
+
     if not os.path.isdir(arguments.out_dir):
         logging.warning("Output directory doesn't exist. Creating a new folder.")
         os.mkdir(arguments.out_dir)
@@ -518,8 +530,8 @@ def process_zonefile_if_yaml(zonefile: str) -> Optional[Dict[str, List[int]]]:
 
 
 def log_input_configuration(arguments_processed: argparse.Namespace) -> None:
-    version = "v0.5.0"
-    is_dev_version = False
+    version = "v0.6.0"
+    is_dev_version = True
     if is_dev_version:
         version += "_dev"
         try:
