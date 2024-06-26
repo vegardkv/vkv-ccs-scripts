@@ -44,18 +44,19 @@ def _make_parser():
     parser = argparse.ArgumentParser(description="Calculate plume area")
     parser.add_argument("input", help="Path to maps created through grid3d-maps")
     parser.add_argument(
-        "--output",
+        "--output_csv",
         help="Path to output CSV file",
         default=None,
     )
     parser.add_argument(
         "--verbose",
-        help="Log information to screen",
+        help="Enable print of detailed information during execution of script",
         action="store_true",
     )
     parser.add_argument(
         "--debug",
-        help="Log debug information to screen",
+        help="Enable print of debugging data during execution of script. "
+        "Normally not necessary for most users.",
         action="store_true",
     )
 
@@ -169,7 +170,7 @@ def _read_args() -> Tuple[str, str]:
     _setup_log_configuration(args)
 
     input_path = args.input
-    output_path = args.output
+    output_path = args.output_csv
 
     if not os.path.isdir(input_path):
         text = f"Input surface directory not found: {input_path}"
@@ -179,8 +180,8 @@ def _read_args() -> Tuple[str, str]:
 
 
 def _log_input_configuration(input_path: str, output_path: str) -> None:
-    version = "v0.6.0"
-    is_dev_version = False
+    version = "v0.7.0"
+    is_dev_version = True
     if is_dev_version:
         version += "_dev"
         try:
