@@ -17,7 +17,7 @@
 - **co2_containment:** This scripts can output several different information: the plume mass, plume volume and returns volumes of CO2 inside/outside a boundary when 1 or 2 polygons are provided. 
 
 ### Additional functionalities
-Additional fonctionnalities are available to post-process CO2 storage modeling data. They have also been developed by the Dig CCS Sub team but are located in other repositories. More information below: 
+Additional functionalities are available to post-process CO2 storage modeling data. They have also been developed by the Dig CCS Sub team but are located in other repositories. More information below: 
 
 - **maps:** 3 maps are available
 
