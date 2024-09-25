@@ -4,7 +4,7 @@ from pathlib import Path
 
 from resdata.resfile import FortIO, ResdataFile, openFortIO
 
-from ccs_scripts.co2_mass_maps import co2_mass_maps
+from ccs_scripts.aggregate import co2_mass_maps
 
 
 def adapt_reek_grid_for_co2_mass_maps_test():
@@ -69,8 +69,7 @@ def adapt_reek_grid_for_co2_mass_maps_test():
 
 def test_co2_mass_maps_reek_grid():
     """
-    Test CO2 containment code, with eclipse Reek data.
-    Tests both mass and actual_volume calculations.
+    Test CO2 mass maps generation, with eclipse Reek data
     """
     adapt_reek_grid_for_co2_mass_maps_test()
     result = str(Path(__file__).absolute().parent / "answers" / "mass_maps")
@@ -90,22 +89,22 @@ def test_co2_mass_maps_reek_grid():
         Path(__file__).absolute().parent
         / "answers"
         / "mass_maps"
-        / "all--co2-mass-aqu-phase--20010801.gri"
+        / "all--co2_mass_aqu_phase--20010801.gri"
     )
     free_co2_file = (
         Path(__file__).absolute().parent
         / "answers"
         / "mass_maps"
-        / "all--co2-mass-gas-phase--20010801.gri"
+        / "all--co2_mass_gas_phase--20010801.gri"
     )
     total_co2_file = (
         Path(__file__).absolute().parent
         / "answers"
         / "mass_maps"
-        / "all--co2-mass-total--20010801.gri"
+        / "all--co2_mass_total--20010801.gri"
     )
-    assert dissolved_co2_file.exists()
     assert free_co2_file.exists()
+    assert dissolved_co2_file.exists()
     assert total_co2_file.exists()
     shutil.rmtree(str(Path(__file__).absolute().parent / "answers" / "mass_maps"))
     os.remove(
@@ -118,3 +117,44 @@ def test_co2_mass_maps_reek_grid():
             / "2_R001_REEK-0-mass-maps.UNRST"
         )
     )
+
+
+def test_co2_mass_maps_residual_trapping_pflotran():
+    """
+    Test CO2 mass maps, with synthetic_case pflotran data
+    """
+    result = str(Path(__file__).absolute().parent / "answers" / "mass_maps")
+    co2_mass_maps.main(
+        [
+            "--config",
+            str(
+                Path(__file__).absolute().parent
+                / "yaml"
+                / "config_co2_mass_maps_pflotran.yml"
+            ),
+            "--mapfolder",
+            str(result),
+        ]
+    )
+    free_gas_co2_file = (
+        Path(__file__).absolute().parent
+        / "answers"
+        / "mass_maps"
+        / "all--co2_mass_free_gas_phase--23000101.gri"
+    )
+    trapped_gas_co2_file = (
+        Path(__file__).absolute().parent
+        / "answers"
+        / "mass_maps"
+        / "all--co2_mass_trapped_gas_phase--23000101.gri"
+    )
+    total_co2_file = (
+        Path(__file__).absolute().parent
+        / "answers"
+        / "mass_maps"
+        / "all--co2_mass_total--23000101.gri"
+    )
+    assert free_gas_co2_file.exists()
+    assert trapped_gas_co2_file.exists()
+    assert not total_co2_file.exists()
+    shutil.rmtree(str(Path(__file__).absolute().parent / "answers" / "mass_maps"))

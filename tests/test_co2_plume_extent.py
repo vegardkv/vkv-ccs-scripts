@@ -46,25 +46,31 @@ def test_calc_plume_extents():
     )
     sgas_results, _, _ = calculate_distances(
         case_path,
-        config,
+        config.distance_calculations,
         threshold_sgas=0.1,
     )[0]
+    sgas_results = sgas_results["ALL"][
+        "WELL"
+    ]  # Get results for "ALL groups" to "single injection WELL"
     assert len(sgas_results) == 4
-    assert np.isnan(sgas_results[0][1])
+    print(sgas_results)
+    assert sgas_results[0][1] == pytest.approx(0.0)
     assert sgas_results[-1][1] == pytest.approx(1269.1237856341113)
 
     sgas_results_2, _, _ = calculate_distances(
         case_path,
-        config,
+        config.distance_calculations,
     )[0]
+    sgas_results_2 = sgas_results_2["ALL"]["WELL"]
     assert len(sgas_results_2) == 4
-    assert np.isnan(sgas_results_2[-1][1])
+    assert sgas_results_2[-1][1] == pytest.approx(0.0)
 
     sgas_results_3, _, _ = calculate_distances(
         case_path,
-        config,
+        config.distance_calculations,
         threshold_sgas=0.0001,
     )[0]
+    sgas_results_3 = sgas_results_3["ALL"]["WELL"]
     assert len(sgas_results_3) == 4
     assert sgas_results_3[-1][1] == pytest.approx(2070.3444680185216)
 
@@ -88,9 +94,10 @@ def test_calc_distances_to_point():
     )
     sgas_results, _, _ = calculate_distances(
         case_path,
-        config,
+        config.distance_calculations,
         threshold_sgas=0.1,
     )[0]
+    sgas_results = sgas_results["ALL"]["ALL"]
     assert len(sgas_results) == 4
     assert np.isnan(sgas_results[0][1])
     assert sgas_results[-1][1] == pytest.approx(4465.953446894702)
@@ -115,9 +122,10 @@ def test_calc_distances_to_line():
     )
     sgas_results, _, _ = calculate_distances(
         case_path,
-        config,
+        config.distance_calculations,
         threshold_sgas=0.1,
     )[0]
+    sgas_results = sgas_results["ALL"]["ALL"]
     assert len(sgas_results) == 4
     assert np.isnan(sgas_results[0][1])
     assert sgas_results[-1][1] == pytest.approx(4331.578703680541)
@@ -125,21 +133,23 @@ def test_calc_distances_to_line():
     config.distance_calculations[0].direction = LineDirection.WEST
     sgas_results, _, _ = calculate_distances(
         case_path,
-        config,
+        config.distance_calculations,
         threshold_sgas=0.1,
     )[0]
+    sgas_results = sgas_results["ALL"]["ALL"]
     assert len(sgas_results) == 4
     assert np.isnan(sgas_results[0][1])
-    assert sgas_results[-1][1] == 0.0
+    assert sgas_results[-1][1] == pytest.approx(0.0)
 
     config.distance_calculations[0].direction = LineDirection.NORTH
     config.distance_calculations[0].x = None
     config.distance_calculations[0].y = 5934000.0
     sgas_results, _, _ = calculate_distances(
         case_path,
-        config,
+        config.distance_calculations,
         threshold_sgas=0.1,
     )[0]
+    sgas_results = sgas_results["ALL"]["ALL"]
     assert len(sgas_results) == 4
     assert np.isnan(sgas_results[0][1])
     assert sgas_results[-1][1] == pytest.approx(498.06528236251324)
@@ -147,9 +157,10 @@ def test_calc_distances_to_line():
     config.distance_calculations[0].direction = LineDirection.SOUTH
     sgas_results, _, _ = calculate_distances(
         case_path,
-        config,
+        config.distance_calculations,
         threshold_sgas=0.1,
     )[0]
+    sgas_results = sgas_results["ALL"]["ALL"]
     assert len(sgas_results) == 4
     assert np.isnan(sgas_results[0][1])
     assert sgas_results[-1][1] == pytest.approx(0.0)
@@ -174,7 +185,7 @@ def test_export_to_csv():
     )
     all_results = calculate_distances(
         case_path,
-        config,
+        config.distance_calculations,
         threshold_sgas=0.1,
     )
 
@@ -183,11 +194,9 @@ def test_export_to_csv():
     df.to_csv(out_file, index=False)
 
     df = pandas.read_csv(out_file)
-    assert "MAX_DISTANCE_plume_extent_1_SGAS" in df.keys()
-    assert "MAX_DISTANCE_plume_extent_1_AMFG" not in df.keys()
-    assert df["MAX_DISTANCE_plume_extent_1_SGAS"].iloc[-1] == pytest.approx(
-        1269.1237856341113
-    )
+    assert "MAX_PLUME_EXTENT_SGAS" in df.keys()
+    assert "MAX_PLUME_EXTENT_AMFG" not in df.keys()
+    assert df["MAX_PLUME_EXTENT_SGAS"].iloc[-1] == pytest.approx(1269.1237856341113)
 
     os.remove(out_file)
 
@@ -221,26 +230,24 @@ def test_plume_extent(mocker):
     main()
 
     df = pandas.read_csv(output_path)
-    assert "MAX_DISTANCE_plume_extent_1_SGAS" in df.keys()
-    assert "MAX_DISTANCE_plume_extent_1_AMFG" not in df.keys()
-    assert df["MAX_DISTANCE_plume_extent_1_SGAS"].iloc[-1] == pytest.approx(
-        1915.5936794783647
-    )
+    assert "MAX_PLUME_EXTENT_SGAS" in df.keys()
+    assert "MAX_PLUME_EXTENT_AMFG" not in df.keys()
+    assert df["MAX_PLUME_EXTENT_SGAS"].iloc[-1] == pytest.approx(1915.5936794783647)
 
     os.remove(output_path)
 
 
-def _get_synthetic_case_paths(case: str):
+def _get_synthetic_case_paths(case: str, realization: int = 0):
     file_name = ""
     if case == "eclipse":
-        file_name = "E_FLT_01-0"
+        file_name = "E_FLT_01-" + str(realization)
     elif case == "pflotran":
-        file_name = "P_FLT_01-0"
+        file_name = "P_FLT_01-" + str(realization)
     case_path = str(
         Path(__file__).parents[1]
         / "tests"
         / "synthetic_model"
-        / "realization-0"
+        / ("realization-" + str(realization))
         / "iter-0"
         / case
         / "model"
@@ -249,7 +256,7 @@ def _get_synthetic_case_paths(case: str):
     output_path = str(
         Path(__file__).parents[1] / "tests" / "testdata_co2_plume" / "plume_extent.csv"
     )
-    return (case_path, output_path)
+    return case_path, output_path
 
 
 def test_plume_extent_eclipse_using_well_name(mocker):
@@ -484,6 +491,45 @@ def test_yaml_file_pflotran(mocker):
         / "answers"
         / "plume_extent"
         / "plume_extent_pflotran_yaml_file.csv"
+    )
+    df_answer = pandas.read_csv(answer_file)
+
+    df = df.sort_values("date")
+    df_answer = df_answer.sort_values("date")
+    pandas.testing.assert_frame_equal(df, df_answer)
+
+
+def test_yaml_file_pflotran_plume_tracking(mocker):
+    (case_path, output_path) = _get_synthetic_case_paths("pflotran", realization=2)
+    config_path = str(
+        Path(__file__).parents[1]
+        / "tests"
+        / "yaml"
+        / "config_co2_plume_extent_plume_tracking.yml"
+    )
+    mocker.patch(
+        "sys.argv",
+        [
+            "--case",
+            case_path,
+            "--config_file",
+            config_path,
+            "--output",
+            output_path,
+            "--threshold_sgas",
+            "0.25",  # To avoid having two plume groups that immediately merge
+        ],
+    )
+    main()
+
+    df = pandas.read_csv(output_path)
+    os.remove(output_path)
+
+    answer_file = str(
+        Path(__file__).parents[0]
+        / "answers"
+        / "plume_extent"
+        / "plume_extent_pflotran_yaml_file_plume_tracking.csv"
     )
     df_answer = pandas.read_csv(answer_file)
 

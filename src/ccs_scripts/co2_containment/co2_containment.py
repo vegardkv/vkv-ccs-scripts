@@ -15,7 +15,7 @@ import socket
 import subprocess
 import sys
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, TextIO, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -357,8 +357,8 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--readable_output",
-        help="Generate output csv-file that is easier to parse than the standard"
-        " output. Currently the same as the old output (WIP).",
+        help="Generate output text-file that is easier to parse than the standard"
+        " output.",
         action="store_true",
     )
 
@@ -392,6 +392,7 @@ class InputError(Exception):
     """Raised for various mistakes in the provided input."""
 
 
+# pylint: disable-msg=too-many-branches
 def process_args() -> argparse.Namespace:
     """
     Process arguments and do some minor conversions.
@@ -403,8 +404,8 @@ def process_args() -> argparse.Namespace:
     args = get_parser().parse_args()
     args.calc_type_input = args.calc_type_input.lower()
 
-    # NBNB: Remove this when residual trapping is added for other calculation types
-    if args.residual_trapping and args.calc_type_input != "mass":
+    # NBNB: Remove this when residual trapping is added for cell_volume
+    if args.residual_trapping and args.calc_type_input == "cell_volume":
         args.residual_trapping = False
 
     _replace_default_dummies_from_ert(args)
@@ -416,8 +417,6 @@ def process_args() -> argparse.Namespace:
             if <root_dir> is not provided."
             raise InputError(error_text)
         args.root_dir = p[2]
-    if args.out_dir is None:
-        args.out_dir = os.path.join(args.root_dir, "share", "results", "tables")
     adict = vars(args)
     paths = [
         "case",
@@ -433,15 +432,25 @@ def process_args() -> argparse.Namespace:
     for key in paths:
         if adict[key] is not None and not pathlib.Path(adict[key]).is_absolute():
             adict[key] = os.path.join(args.root_dir, adict[key])
+    if args.out_dir is None:
+        args.out_dir = os.path.join(args.root_dir, "share", "results", "tables")
 
     if args.egrid is None:
         args.egrid = args.case
-        if not args.case.endswith(".EGRID"):
+        if not args.egrid.endswith(".EGRID"):
             args.egrid += ".EGRID"
     if args.unrst is None:
-        args.unrst = args.egrid.replace(".EGRID", ".UNRST")
+        args.unrst = args.case
+        if args.unrst.endswith(".EGRID"):
+            args.unrst = args.unrst.replace(".EGRID", ".UNRST")
+        else:
+            args.unrst += ".UNRST"
     if args.init is None:
-        args.init = args.egrid.replace(".EGRID", ".INIT")
+        args.init = args.case
+        if args.init.endswith(".EGRID"):
+            args.init = args.init.replace(".EGRID", ".INIT")
+        else:
+            args.init += ".INIT"
 
     if args.debug:
         logging.basicConfig(format="%(message)s", level=logging.DEBUG)
@@ -694,16 +703,7 @@ def convert_data_frame(
     residual_trapping: bool,
 ) -> pd.DataFrame:
     """
-    Convert output format to human-readable state
-
-    Work in progress
-    TODO:
-        - Formatting
-            * Column widths
-            * Number formats
-            * Units
-        - Consider handling of zones and regions
-            * Possible to do separate files
+    Convert output format to human-/Excel-readable state.
     """
     calc_type = _set_calc_type_from_input_string(calc_type_input)
     logging.info("\nMerge data rows for data frame")
@@ -712,52 +712,45 @@ def convert_data_frame(
         calc_type,
         residual_trapping,
     )
-    data = {}
-    if zone_info["source"] is not None:
-        data["zone"] = {
-            z: _merge_date_rows(g, calc_type, residual_trapping)
-            for z, g in data_frame[data_frame["zone"] != "all"]
-            .drop(columns=["region"])
-            .groupby("zone")
-        }
+    data: Dict[str, Dict] = {}
+    zones = []
+    regions = []
+    if zone_info["int_to_zone"] is not None:
+        zones = [z for z in zone_info["int_to_zone"] if z is not None]
+        data["zone"] = {}
+        for z in zones:
+            data["zone"][z] = _merge_date_rows(
+                data_frame[data_frame["zone"] == z],
+                calc_type,
+                residual_trapping,
+            )
     if region_info["int_to_region"] is not None:
-        data["region"] = {
-            r: _merge_date_rows(g, calc_type, residual_trapping)
-            for r, g in data_frame[data_frame["region"] != "all"]
-            .drop(columns=["zone"])
-            .groupby("region")
-        }
+        regions = [r for r in region_info["int_to_region"] if r is not None]
+        data["region"] = {}
+        for r in regions:
+            data["region"][r] = _merge_date_rows(
+                data_frame[data_frame["region"] == r],
+                calc_type,
+                residual_trapping,
+            )
 
     zone_df = pd.DataFrame()
     region_df = pd.DataFrame()
-    if zone_info["source"] is not None:
+    if zone_info["int_to_zone"] is not None:
         total_df["zone"] = ["all"] * total_df.shape[0]
-        assert zone_info["int_to_zone"] is not None
-        zone_keys = list(data["zone"].keys())
-        for key in filter(None, zone_info["int_to_zone"]):  # type: str
-            if key in zone_keys:
-                _df = data["zone"][key]
-            else:
-                _df = data["zone"][zone_keys[0]]
-                numeric_cols = _df.select_dtypes(include=["number"]).columns
-                _df[numeric_cols] = 0
-            _df["zone"] = [key] * _df.shape[0]
+        for z in zones:
+            _df = data["zone"][z]
+            _df["zone"] = [z] * _df.shape[0]
             zone_df = pd.concat([zone_df, _df])
         if region_info["int_to_region"] is not None:
             zone_df["region"] = ["all"] * zone_df.shape[0]
     if region_info["int_to_region"] is not None:
         total_df["region"] = ["all"] * total_df.shape[0]
-        region_keys = list(data["region"].keys())
-        for key in filter(None, region_info["int_to_region"]):
-            if key in region_keys:
-                _df = data["region"][key]
-            else:
-                _df = data["region"][region_keys[0]]
-                numeric_cols = _df.select_dtypes(include=["number"]).columns
-                _df[numeric_cols] = 0
-            _df["region"] = [key] * _df.shape[0]
+        for r in regions:
+            _df = data["region"][r]
+            _df["region"] = [r] * _df.shape[0]
             region_df = pd.concat([region_df, _df])
-        if zone_info["source"] is not None:
+        if zone_info["int_to_zone"] is not None:
             region_df["zone"] = ["all"] * region_df.shape[0]
     combined_df = pd.concat([total_df, zone_df, region_df])
     return combined_df
@@ -770,18 +763,176 @@ def export_output_to_csv(
 ):
     """
     Exports the results to a csv file, named according to the calculation type
-    (mass / cell_volume / actual_volume)
+    (mass / cell_volume / actual_volume).
     """
-    if "amount" in data_frame.columns:
-        file_name = f"plume_{calc_type_input}.csv"
-    else:
-        file_name = f"plume_{calc_type_input}_OLD_OUTPUT.csv"
+    file_name = f"plume_{calc_type_input}.csv"
     logging.info(f"\nExport results to CSV file: {file_name}")
     file_path = os.path.join(out_dir, file_name)
     if os.path.isfile(file_path):
         logging.info(f"Output CSV file already exists. Overwriting: {file_path}")
 
     data_frame.to_csv(file_path, index=False)
+
+
+def export_readable_output(
+    df: pd.DataFrame,
+    zone_info: dict,
+    region_info: dict,
+    out_dir: str,
+    calc_type_input: str,
+    residual_trapping: bool,
+) -> None:
+    """
+    Exports the results to a more readable csv file than the standard output,
+    both directly in a text editor and when loaded into Excel.
+    Named according to the calculation type (mass / cell_volume / actual_volume)
+    """
+    file_name = f"plume_{calc_type_input}_summary_format.csv"
+    logging.info(f"\nExport results to readable text file: {file_name}")
+    file_path = os.path.join(out_dir, file_name)
+    if os.path.isfile(file_path):
+        logging.info(f"Output text file already exists. Overwriting: {file_path}")
+    df, details = prepare_writing_details(df, calc_type_input, residual_trapping)
+
+    zones = []
+    regions = []
+    if zone_info["int_to_zone"] is not None:
+        zones += [zone for zone in zone_info["int_to_zone"] if zone is not None]
+    if region_info["int_to_region"] is not None:
+        regions += [
+            region for region in region_info["int_to_region"] if region is not None
+        ]
+    with open(file_path, "w", encoding="utf-8") as file:
+        file.write(details["type"])
+        file.write(details["unit"])
+        file.write(details["empty"])
+        write_lines(file, df, "all", "all", details)
+        if len(zones) > 0:
+            file.write(
+                f"\n{'Filtered by zone:,':<{11 + details['width']}}"
+                + details["blank"] * (details["num_cols"] - 2)
+            )
+        for zone in zones:
+            write_lines(file, df, zone, "all", details)
+        if len(regions) > 0:
+            file.write(
+                f"\n{'Filtered by region:,':<{11 + details['width']}}"
+                + details["blank"] * (details["num_cols"] - 2)
+            )
+        for region in regions:
+            write_lines(file, df, "all", region, details)
+
+
+def find_width(num_decimals: int, max_value: Union[int, float]) -> int:
+    """
+    Use wider columns in the summary format if the numbers are large.
+    """
+    return int(max((12, num_decimals + 3 + np.floor(np.log(max_value) / np.log(10)))))
+
+
+def prepare_writing_details(
+    df: pd.DataFrame,
+    calc_type: str,
+    residual_trapping: bool,
+) -> Tuple[pd.DataFrame, dict]:
+    """
+    Prepare headers and other information to be written in the summary file.
+    """
+    details: Dict = {
+        "numeric": [c for c in df.columns if c not in ["date", "zone", "region"]],
+        "num_decimals": (
+            3 if calc_type == "mass" else 6 if calc_type == "actual_volume" else 2
+        ),
+    }
+    scale = 1e6 if calc_type == "cell_volume" else 1e9
+    for column in details["numeric"]:
+        df[column] /= scale
+    width = find_width(details["num_decimals"], np.nanmax(df[details["numeric"]]))
+    phase = (
+        f",{'Free gas':>{width}},{'Trapped gas':>{width}},{'Aqueous':>{width}}"
+        if residual_trapping
+        else f",{'Gas':>{width}},{'Aqueous':>{width}}"
+    )
+    n_phase = 0 if calc_type == "cell_volume" else 3 if residual_trapping else 2
+
+    details["num_phase"] = n_phase
+    details["num_cols"] = 5 + 4 * n_phase
+    details["blank"] = "," + " " * width
+
+    dat = "\n      Date"
+    tot = f",{'Total':>{width}}"
+    con = f",{'Contained':>{width}}"
+    out = f",{'Outside':>{width}}"
+    haz = f",{'Hazardous':>{width}}"
+    if calc_type == "cell_volume":
+        details["over_header"] = details["blank"] * (details["num_cols"] - 2)
+        details["header"] = dat + tot + con + out + haz
+    else:
+        details["over_header"] = (
+            tot * (n_phase + 3) + con * n_phase + out * n_phase + haz * n_phase
+        )
+        details["header"] = dat + tot + phase + con + out + haz + phase * 3
+    if calc_type == "mass":
+        c_type = f" Calc type,{'Mass':>{width}}"
+        unit = f"\n      Unit,{'Megatons':>{width}}," + " " * width
+    elif calc_type == "actual_volume":
+        c_type = f" Calc type,{'Volume':>{width}}"
+        unit = f"\n      Unit,{'Cubic kilometers':>{max((17, width))}},"
+        unit += " " * (width + min((0, width - 17)))
+    else:
+        c_type = f" Calc type,{'Cell volume':>{width}}"
+        unit = f"\n      Unit,{'#cells (millions)':>{max((18, width))}},"
+        unit += " " * (width + min((0, width - 18)))
+    details["type"] = c_type + details["blank"] * (details["num_cols"] - 2)
+    details["unit"] = unit + details["blank"] * (details["num_cols"] - 3)
+    details["empty"] = "\n          " + details["blank"] * (details["num_cols"] - 1)
+    details["width"] = width
+    return df, details
+
+
+def write_lines(
+    file: TextIO,
+    data_frame: pd.DataFrame,
+    zone: str,
+    region: str,
+    details: dict,
+) -> None:
+    """
+    Write lines for the section of the containment output corresponding to the area
+    defined by the specified region or zone (or the total across all).
+    """
+    df = data_frame[(data_frame["zone"] == zone) & (data_frame["region"] == region)]
+    max_name_length = 10 + details["width"]
+    if zone == "all" and region == "all":
+        over_header = "\n          ," + " " * details["width"]
+    elif region != "all":
+        if len(region) > max_name_length:
+            logging.warning(
+                "Region name is long and will be cut off in the summary format!"
+            )
+            region = region[:max_name_length]
+        over_header = f"\n{region:>10}," + " " * (
+            details["width"] + min((0, 10 - len(region)))
+        )
+    else:
+        if len(zone) > max_name_length:
+            logging.warning(
+                "Zone name is long and will be cut off in the summary format!"
+            )
+            zone = zone[:max_name_length]
+        over_header = f"\n{zone:>10}," + " " * (
+            details["width"] + min((0, 10 - len(zone)))
+        )
+
+    file.write(over_header + details["over_header"])
+    file.write(details["header"])
+    for lines_done in range(df.shape[0]):
+        line = f"\n{df['date'].values[lines_done]}"
+        values = df[details["numeric"]].values[lines_done]
+        for value in values:
+            line += f",{value:>{details['width']}.{details['num_decimals']}f}"
+        file.write(line)
+    file.write(details["empty"])
 
 
 def main() -> None:
@@ -825,7 +976,6 @@ def main() -> None:
         arguments_processed.calc_type_input,
         data_frame,
     )
-    # Save also old output - WIP to make this better
     if arguments_processed.readable_output:
         df_old_output = convert_data_frame(
             data_frame,
@@ -834,10 +984,13 @@ def main() -> None:
             arguments_processed.calc_type_input,
             arguments_processed.residual_trapping,
         )
-        export_output_to_csv(
+        export_readable_output(
+            df_old_output,
+            zone_info,
+            region_info,
             arguments_processed.out_dir,
             arguments_processed.calc_type_input,
-            df_old_output,
+            arguments_processed.residual_trapping,
         )
 
 
