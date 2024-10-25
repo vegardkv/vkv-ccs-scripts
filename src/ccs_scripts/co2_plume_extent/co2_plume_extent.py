@@ -28,10 +28,11 @@ from ccs_scripts.co2_plume_tracking.co2_plume_tracking import calculate_plume_gr
 from ccs_scripts.co2_plume_tracking.utils import (
     InjectionWellData,
     assemble_plume_groups_into_dict,
+    sort_well_names,
 )
 
-DEFAULT_THRESHOLD_SGAS = 0.2
-DEFAULT_THRESHOLD_AMFG = 0.0005
+DEFAULT_THRESHOLD_GAS = 0.2
+DEFAULT_THRESHOLD_AQUEOUS = 0.0005
 INJ_POINT_THRESHOLD = 60.0
 
 DESCRIPTION = """
@@ -182,7 +183,7 @@ class Configuration:
                         x=injection_well_info["x"],
                         y=injection_well_info["y"],
                         z=(
-                            injection_well_info["z"]
+                            [injection_well_info["z"]]
                             if "z" in injection_well_info
                             else None
                         ),
@@ -475,16 +476,16 @@ def _make_parser() -> argparse.ArgumentParser:
         default=None,
     )
     parser.add_argument(
-        "--threshold_sgas",
-        default=DEFAULT_THRESHOLD_SGAS,
+        "--threshold_gas",
+        default=DEFAULT_THRESHOLD_GAS,
         type=float,
-        help="Threshold for SGAS",
+        help="Threshold for gas saturation (SGAS)",
     )
     parser.add_argument(
-        "--threshold_amfg",
-        default=DEFAULT_THRESHOLD_AMFG,
+        "--threshold_aqueous",
+        default=DEFAULT_THRESHOLD_AQUEOUS,
         type=float,
-        help="Threshold for AMFG",
+        help="Threshold for aqueous mole fraction of gas (AMFG or XMF2)",
     )
     parser.add_argument(
         "--column_name",
@@ -493,8 +494,8 @@ def _make_parser() -> argparse.ArgumentParser:
         help="Name that will be included in the column of the CSV file",
     )
     parser.add_argument(
-        "--verbose",
-        help="Enable print of detailed information during execution of script",
+        "--no_logging",
+        help="Skip print of detailed information during execution of script",
         action="store_true",
     )
     parser.add_argument(
@@ -510,15 +511,15 @@ def _make_parser() -> argparse.ArgumentParser:
 def _setup_log_configuration(arguments: argparse.Namespace) -> None:
     if arguments.debug:
         logging.basicConfig(format="%(message)s", level=logging.DEBUG)
-    elif arguments.verbose:
-        logging.basicConfig(format="%(message)s", level=logging.INFO)
-    else:
+    elif arguments.no_logging:
         logging.basicConfig(format="%(message)s", level=logging.WARNING)
+    else:
+        logging.basicConfig(format="%(message)s", level=logging.INFO)
 
 
 def _log_input_configuration(arguments: argparse.Namespace) -> None:
-    version = "v0.7.0"
-    is_dev_version = False
+    version = "v0.8.0"
+    is_dev_version = True
     if is_dev_version:
         version += "_dev"
         try:
@@ -569,8 +570,8 @@ def _log_input_configuration(arguments: argparse.Namespace) -> None:
     else:
         text = arguments.output_csv
     logging.info(f"Output CSV file         : {text}")
-    logging.info(f"Threshold SGAS          : {arguments.threshold_sgas}")
-    logging.info(f"Threshold AMFG          : {arguments.threshold_amfg}\n")
+    logging.info(f"Threshold gas           : {arguments.threshold_gas}")
+    logging.info(f"Threshold aqueous       : {arguments.threshold_aqueous}\n")
 
 
 def _log_distance_calculation_configurations(config: Configuration) -> None:
@@ -598,7 +599,7 @@ def _log_distance_calculation_configurations(config: Configuration) -> None:
     logging.info(f"\n{'Number':<8} {'Name':<15} {'x':<15} {'y':<15} {'z':<15}")
     logging.info("-" * 72)
     for i, well in enumerate(config.injection_wells, 1):
-        z_str = f"{well.z:<15}" if well.z is not None else "-"
+        z_str = f"{well.z[0]:<15}" if well.z is not None else "-"
         logging.info(f"{i:<8} {well.name:<15} {well.x:<15} {well.y:<15} {z_str}")
     logging.info("")
 
@@ -683,8 +684,8 @@ def calculate_single_distances(
     nactive: int,
     grid: Grid,
     unrst: ResdataFile,
-    threshold_sgas: float,
-    threshold_amfg: float,
+    threshold_gas: float,
+    threshold_aqueous: float,
     config: Calculation,
     inj_wells: Optional[List[InjectionWellData]],
     plume_groups_sgas: Optional[List[List[str]]],
@@ -700,7 +701,7 @@ def calculate_single_distances(
     sgas_results = _find_distances_per_time_step(
         "SGAS",
         calculation_type,
-        threshold_sgas,
+        threshold_gas,
         unrst,
         dist,
         inj_wells,
@@ -711,7 +712,7 @@ def calculate_single_distances(
         amfg_results = _find_distances_per_time_step(
             "AMFG",
             calculation_type,
-            threshold_amfg,
+            threshold_aqueous,
             unrst,
             dist,
             inj_wells,
@@ -722,7 +723,7 @@ def calculate_single_distances(
         amfg_results = _find_distances_per_time_step(
             "XMF2",
             calculation_type,
-            threshold_amfg,
+            threshold_aqueous,
             unrst,
             dist,
             inj_wells,
@@ -742,8 +743,8 @@ def calculate_distances(
     distance_calculations: List[Calculation],
     injection_wells: Optional[List[InjectionWellData]] = None,
     do_plume_tracking: bool = False,
-    threshold_sgas: float = DEFAULT_THRESHOLD_SGAS,
-    threshold_amfg: float = DEFAULT_THRESHOLD_AMFG,
+    threshold_gas: float = DEFAULT_THRESHOLD_GAS,
+    threshold_aqueous: float = DEFAULT_THRESHOLD_AQUEOUS,
 ) -> List[Tuple[dict, Optional[dict], Optional[str]]]:
     """
     Find distance (plume extent / distance to point / distance to line) per
@@ -756,7 +757,7 @@ def calculate_distances(
     if do_plume_tracking and injection_wells is not None:
         plume_groups_sgas = calculate_plume_groups(
             "SGAS",
-            threshold_sgas,
+            threshold_gas,
             unrst,
             grid,
             injection_wells,
@@ -771,7 +772,7 @@ def calculate_distances(
         if amfg_key is not None:
             plume_groups_amfg = calculate_plume_groups(
                 amfg_key,
-                threshold_amfg,
+                threshold_aqueous,
                 unrst,
                 grid,
                 injection_wells,
@@ -792,8 +793,8 @@ def calculate_distances(
             nactive,
             grid,
             unrst,
-            threshold_sgas,
-            threshold_amfg,
+            threshold_gas,
+            threshold_aqueous,
             single_config,
             injection_wells,
             plume_groups_sgas,
@@ -802,51 +803,6 @@ def calculate_distances(
         all_results.append((a, b, c))
         logging.info(f"Done calculating distances for configuration number: {i}\n")
     return all_results
-
-
-def _log_number_of_grid_cells(
-    n_grid_cells_for_logging: Dict[str, List[int]],
-    report_dates: List[datetime],
-    attribute_key: str,
-):
-    logging.info(
-        f"Number of grid cells with {attribute_key} above threshold "
-        f"for the different plumes:"
-    )
-    cols = [c for c in n_grid_cells_for_logging]
-    header = f"{'Date':<11}"
-    widths = {}
-    for col in cols:
-        widths[col] = max(9, len(col))
-        header += f" {col:>{widths[col]}}"
-    logging.info("\n" + header)
-    logging.info("-" * len(header))
-    for i, d in enumerate(report_dates):
-        date = d.strftime("%Y-%m-%d")
-        row = f"{date:<11}"
-        for col in cols:
-            n_cells = (
-                str(n_grid_cells_for_logging[col][i])
-                if n_grid_cells_for_logging[col][i] > 0
-                else "-"
-            )
-            row += f" {n_cells:>{widths[col]}}"
-        logging.info(row)
-    logging.info("")
-    if "?" in n_grid_cells_for_logging:
-        no_groups = len(n_grid_cells_for_logging) == 1
-        logging.warning(
-            f"WARNING: Plume group not found for "
-            f"{'any' if no_groups else 'some'} grid cells with CO2."
-        )
-        logging.warning("         See table above, under column '?'.")
-        if no_groups:
-            logging.warning(
-                "         The reason might be incorrect coordinates "
-                "for the injection wells.\n"
-            )
-        else:
-            logging.warning("")  # Line ending
 
 
 def _find_distances_per_time_step(
@@ -1107,6 +1063,7 @@ def _find_column_name(
 def _collect_results_into_dataframe(
     all_results: List[Tuple[dict, Optional[dict], Optional[str]]],
     config: Configuration,
+    injection_wells: Optional[List[InjectionWellData]] = None,
 ) -> pd.DataFrame:
     dates = _find_dates(all_results)
     df = pd.DataFrame.from_records(dates, columns=["date"])
@@ -1116,6 +1073,9 @@ def _collect_results_into_dataframe(
         (sgas_results, amfg_results, amfg_key) = result
 
         col = _find_column_name(single_config, len(config.distance_calculations), i)
+
+        if injection_wells is not None and config.do_plume_tracking:
+            sgas_results = sort_well_names(sgas_results, injection_wells)
 
         for group_str, results in sgas_results.items():
             for well_name, result2 in results.items():
@@ -1129,7 +1089,11 @@ def _collect_results_into_dataframe(
                 )
                 df = pd.merge(df, sgas_df, on="date")
         if amfg_results is not None:
-            for group_str, results in amfg_results.items():
+            if injection_wells is not None and config.do_plume_tracking:
+                amfg_results_sorted = sort_well_names(amfg_results, injection_wells)
+            else:
+                amfg_results_sorted = amfg_results
+            for group_str, results in amfg_results_sorted.items():
                 for well_name, result2 in results.items():
                     if result2 is not None:
                         if amfg_key is None:
@@ -1303,8 +1267,8 @@ def main():
         config.distance_calculations,
         config.injection_wells,
         config.do_plume_tracking,
-        args.threshold_sgas,
-        args.threshold_amfg,
+        args.threshold_gas,
+        args.threshold_aqueous,
     )
 
     output_file = _find_output_file(args.output_csv, args.case)
@@ -1312,6 +1276,7 @@ def main():
     df = _collect_results_into_dataframe(
         all_results,
         config,
+        config.injection_wells,
     )
     _log_results(df)
     _log_results_detailed(df)

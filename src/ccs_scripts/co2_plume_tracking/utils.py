@@ -15,7 +15,9 @@ class InjectionWellData:
     name: str
     x: float
     y: float
-    z: Optional[float]
+    z: Optional[
+        List[float]
+    ]  # Normally only 1 value, but we might keep multiple when z is not provided
     number: int
 
 
@@ -166,6 +168,14 @@ class PlumeGroups:
                 unique_groups.append([-1])
         return unique_groups
 
+    def check_if_well_is_part_of_larger_group(
+        self, well_number: int
+    ) -> Optional[List[int]]:
+        for group in self.find_unique_groups():
+            if len(group) > 1 and well_number in group:
+                return group
+        return None
+
     def debug_print(self):
         logger = logging.getLogger(__name__)
         if logger.isEnabledFor(logging.DEBUG):
@@ -201,3 +211,27 @@ def assemble_plume_groups_into_dict(plume_groups: List[str]) -> Dict[str, List[i
             else:
                 pg_dict[group] = [ind]
     return pg_dict
+
+
+def _sort_well_names_in_merged_groups(name: str, inj_wells: List[InjectionWellData]):
+    wells = name.split("+")
+    if len(wells) > 1:
+        sorted_wells = [well.name for well in inj_wells if well.name in wells]
+        return "+".join(sorted_wells)
+    return name
+
+
+def sort_well_names(input_dict: Dict, inj_wells: List[InjectionWellData]):
+    modified_dict = {
+        _sort_well_names_in_merged_groups(name, inj_wells): value
+        for name, value in input_dict.items()
+    }
+    cols = [c for c in modified_dict]
+    sorted_cols = [well.name for well in inj_wells if well.name in cols]
+    for col in cols:
+        if col not in sorted_cols:
+            sorted_cols.append(col)
+    dict_sorted = {}
+    for col in sorted_cols:
+        dict_sorted[col] = input_dict[col]
+    return dict_sorted
