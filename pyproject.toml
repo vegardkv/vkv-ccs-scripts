@@ -13,7 +13,7 @@ write_to = "src/ccs_scripts/version.py"
 name = "ccs-scripts"
 description = "Equinor's collection of scripts related to CCS"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 license = { file = "LICENSE" }
 authors = [
     { name = "Equinor", email = "fmmo@equinor.com" },
@@ -27,24 +27,24 @@ classifiers = [
     # "Topic :: Software Development :: Libraries",
     # "Topic :: Utilities",
     "Operating System :: POSIX :: Linux",
-    "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Natural Language :: English",
     # "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
 ]
 dynamic = ["version"]
 dependencies = [
     "resdata",
-    "numpy<2",
+    "numpy",
     "pandas",
     "scipy",
     "shapely",
     "xtgeo",
     "pyyaml",
-    "grid3d-maps",
     "ert",
+    "resfo",
 ]
 
 [project.optional-dependencies]
@@ -80,7 +80,7 @@ Repository = "https://github.com/equinor/ccs_scripts"
 
 [project.scripts]
 co2_containment = "ccs_scripts.co2_containment.co2_containment:main"
-co2_mass_maps = "ccs_scripts.aggregate.co2_mass_maps:main"
+co2_mass_map = "ccs_scripts.aggregate.co2_mass_map:main"
 co2_plume_area = "ccs_scripts.co2_plume_area.co2_plume_area:main"
 co2_plume_extent = "ccs_scripts.co2_plume_extent.co2_plume_extent:main"
 grid3d_aggregate_map = "ccs_scripts.aggregate.grid3d_aggregate_map:main"

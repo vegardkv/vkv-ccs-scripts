@@ -8,6 +8,7 @@ import numpy as np
 import xtgeo
 from xtgeo.common import XTGeoDialog
 
+from ccs_scripts.aggregate._co2_mass import MapName
 from ccs_scripts.aggregate._config import (
     AggregationMethod,
     ComputeSettings,
@@ -87,6 +88,15 @@ def write_plot_using_quickplot(surface, filename):
     quickplot(surface, filename=filename.with_suffix(".png"))
 
 
+def modify_mass_property_names(properties: List[xtgeo.GridProperty]):
+    if any("MASS" in p.name for p in properties):
+        for p in properties:
+            if "MASS" in p.name:
+                mass_prop_name = p.name.split("--")[0]
+                mass_prop_date = p.name.split("--")[1]
+                p.name = f"{MapName[mass_prop_name].value}--{mass_prop_date}"
+
+
 def generate_maps(
     input_: Input,
     zonation: Zonation,
@@ -100,6 +110,7 @@ def generate_maps(
     _XTG.say("Reading grid, properties and zone(s)")
     grid = xtgeo.grid_from_file(input_.grid)
     properties = extract_properties(input_.properties, grid, input_.dates)
+    modify_mass_property_names(properties)
     _filters: List[Tuple[str, Optional[Union[np.ndarray, None]]]] = []
     if computesettings.all:
         _filters.append(("all", None))
@@ -118,15 +129,38 @@ def generate_maps(
         _property_tag(p.name, computesettings.aggregation, output.aggregation_tag)
         for p in properties
     ]
-    surfs = _ndarray_to_regsurfs(
-        [f[0] for f in _filters],
-        prop_tags,
-        xn,
-        yn,
-        p_maps,
-        output.lowercase,
-    )
-    _write_surfaces(surfs, output.mapfolder, output.plotfolder, output.use_plotly)
+    if computesettings.aggregate_map:
+        surfs = _ndarray_to_regsurfs(
+            [f[0] for f in _filters],
+            prop_tags,
+            xn,
+            yn,
+            p_maps,
+            output.lowercase,
+        )
+        _write_surfaces(surfs, output.mapfolder, output.plotfolder, output.use_plotly)
+    if computesettings.indicator_map:
+        prop_tags_indicator = [p.replace("max", "indicator") for p in prop_tags]
+        p_maps_indicator = [
+            [np.where(np.isfinite(p), 1, p) for p in map] for map in p_maps
+        ]
+        surfs_indicator = _ndarray_to_regsurfs(
+            [f[0] for f in _filters],
+            prop_tags_indicator,
+            xn,
+            yn,
+            p_maps_indicator,
+            output.lowercase,
+        )
+        _write_surfaces(
+            surfs_indicator, output.mapfolder, output.plotfolder, output.use_plotly
+        )
+    if not computesettings.aggregate_map and not computesettings.indicator_map:
+        error_text = (
+            "As neither indicator_map nor aggregate_map were requested,"
+            " no map is produced"
+        )
+        raise Exception(error_text)
 
 
 def _property_tag(prop: str, agg_method: AggregationMethod, agg_tag: bool):
@@ -195,6 +229,56 @@ def generate_from_config(config: _config.RootConfig):
     )
 
 
+def _distribute_config_property(config_: _config.RootConfig):
+    if config_.input.properties is None:
+        return
+    if not isinstance(config_.input.properties[0].name, list):
+        return
+    tmp_props = config_.input.properties.pop()
+    if isinstance(tmp_props.lower_threshold, list) and len(tmp_props.name) == len(
+        tmp_props.lower_threshold
+    ):
+        config_.input.properties.extend(
+            [
+                _config.Property(tmp_props.source, name, threshold)
+                for name, threshold in zip(tmp_props.name, tmp_props.lower_threshold)
+            ]
+        )
+    elif isinstance(tmp_props.lower_threshold, float) or (
+        isinstance(tmp_props.lower_threshold, list)
+        and len(tmp_props.lower_threshold) == 1
+    ):
+        logging.info(
+            f"Only one value of threshold for {str(len(tmp_props.name))}."
+            f"properties. The same threshold will be assumed for all the"
+            f"properties."
+        )
+        if (
+            isinstance(tmp_props.lower_threshold, list)
+            and len(tmp_props.lower_threshold) == 1
+        ):
+            tmp_props.lower_threshold = tmp_props.lower_threshold * len(tmp_props.name)
+        else:
+            tmp_props.lower_threshold = [tmp_props.lower_threshold] * len(
+                tmp_props.name
+            )
+        config_.input.properties.extend(
+            [
+                _config.Property(tmp_props.source, name, threshold)
+                for name, threshold in zip(tmp_props.name, tmp_props.lower_threshold)
+            ]
+        )
+    else:
+        error_text = (
+            f"{str(len(tmp_props.lower_threshold))} values of co2_threshold"
+            f"provided, but {str(len(tmp_props.name))} properties in config"
+            f" file input. Fix the amount of values in co2_threshold or"
+            f"the amount of properties in config file"
+        )
+        raise Exception(error_text)
+    return
+
+
 def main(arguments=None):
     """
     Main function that wraps `generate_from_config` with argument parsing
@@ -204,7 +288,9 @@ def main(arguments=None):
     _XTG.say("Running grid3d_aggregate_map using code from ccs-scripts")
     if arguments is None:
         arguments = sys.argv[1:]
-    generate_from_config(process_arguments(arguments))
+    config_ = process_arguments(arguments)
+    _distribute_config_property(config_)
+    generate_from_config(config_)
 
 
 if __name__ == "__main__":

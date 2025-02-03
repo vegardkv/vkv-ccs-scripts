@@ -13,8 +13,8 @@ from resdata.resfile import ResdataFile
 
 DEFAULT_CO2_MOLAR_MASS = 44.0
 DEFAULT_WATER_MOLAR_MASS = 18.0
-TRESHOLD_SGAS = 1e-16
-TRESHOLD_AMFG = 1e-16
+TRESHOLD_GAS = 1e-16
+TRESHOLD_DISSOLVED = 1e-16
 PROPERTIES_NEEDED_PFLOTRAN = ["PORV", "DGAS", "DWAT", "AMFG", "YMFG"]
 PROPERTIES_NEEDED_ECLIPSE = ["RPORV", "BGAS", "BWAT", "XMF2", "YMF2"]
 
@@ -219,14 +219,16 @@ class Co2DataAtTimeStep:
 
     Args:
       date (str): The time step
-      aqu_phase (np.ndarray): The amount of CO2 in aqueous phase
+      dis_phase (np.ndarray): The amount of CO2 in dissolved phase
       gas_phase (np.ndarray): The amount of CO2 in gaseous phase
       volume_coverage (np.ndarray): The volume of a cell (specific of
                                     calc_type_input = volume_extent)
+      trapped_gas_phase (np.ndarray): The amount of CO2 in trapped/stranded gas phase
+      free_gas_phase (np.ndarray): The amount of CO2 in free gas phase
     """
 
     date: str
-    aqu_phase: np.ndarray
+    dis_phase: np.ndarray
     gas_phase: np.ndarray
     volume_coverage: np.ndarray
     trapped_gas_phase: np.ndarray
@@ -234,10 +236,10 @@ class Co2DataAtTimeStep:
 
     def total_mass(self) -> np.ndarray:
         """
-        Computes total mass as the sum of gas in aqueous and gas
+        Computes total mass as the sum of gas in dissolved and gas
         phase.
         """
-        return self.aqu_phase + self.gas_phase
+        return self.dis_phase + self.gas_phase
 
 
 @dataclass
@@ -259,9 +261,23 @@ class Co2Data:
     x_coord: np.ndarray
     y_coord: np.ndarray
     data_list: List[Co2DataAtTimeStep]
-    units: Literal["kg", "m3"]
+    units: Literal["kg", "tons", "m3"]
     zone: Optional[np.ndarray] = None
     region: Optional[np.ndarray] = None
+
+
+@dataclass
+class ZoneInfo:
+    source: str
+    zranges: Optional[Dict[str, List[int]]]
+    int_to_zone: Optional[List[Optional[str]]]
+
+
+@dataclass
+class RegionInfo:
+    source: str
+    int_to_region: Optional[List[Optional[str]]]
+    property_name: str
 
 
 def _try_prop(unrst: ResdataFile, prop_name: str):
@@ -327,23 +343,23 @@ def _fetch_properties(
     return properties, dates
 
 
-def _identify_gas_less_cells(sgases: dict, amfgs: dict) -> np.ndarray:
+def _identify_gas_less_cells(sgas: dict, dissolved_prop: dict) -> np.ndarray:
     """
     Identifies those cells that do not have gas. This is done based on thresholds for
-    SGAS and AMFG.
+    SGAS and AMFG/XMF2 (dissolved property).
 
     Args:
-      sgases (dict): The values of SGAS for each grid cell
-      amfgs (dict): The values of AMFG for each grid cell
+      sgas (dict): The values of SGAS for each grid cell
+      dissolved_prop (dict): The values of AMFG or XMF2 for each grid cell
 
     Returns:
       np.ndarray
 
     """
-    gas_less = np.logical_and.reduce(
-        [np.abs(sgases[s]) < TRESHOLD_SGAS for s in sgases]
+    gas_less = np.logical_and.reduce([np.abs(sgas[s]) < TRESHOLD_GAS for s in sgas])
+    gas_less &= np.logical_and.reduce(
+        [np.abs(dissolved_prop[a]) < TRESHOLD_DISSOLVED for a in dissolved_prop]
     )
-    gas_less &= np.logical_and.reduce([np.abs(amfgs[a]) < TRESHOLD_AMFG for a in amfgs])
     return gas_less
 
 
@@ -382,41 +398,10 @@ def _is_subset(first: List[str], second: List[str]) -> bool:
     return all(x in second for x in first)
 
 
-# pylint: disable=too-many-arguments
-def _extract_source_data(
-    grid_file: str,
-    unrst_file: str,
-    properties_to_extract: List[str],
-    zone_info: Dict,
-    region_info: Dict,
-    init_file: Optional[str] = None,
-) -> SourceData:
-    # pylint: disable=too-many-locals, too-many-statements
-    """Extracts the properties in properties_to_extract from Grid files
-
-    Args:
-      grid_file (str): Path to EGRID-file
-      unrst_file (str): Path to UNRST-file
-      properties_to_extract (List): Names of the properties to be extracted
-      init_file (str): Path to INIT-file
-      zone_info (Dict): Dictionary containing zone information
-      region_info (Dict): Dictionary containing region information
-
-    Returns:
-      SourceData
-
-    """
-    logging.info("Start extracting source data")
-    grid = Grid(grid_file)
-    unrst = ResdataFile(unrst_file)
-    init = ResdataFile(init_file)
-    properties, dates = _fetch_properties(unrst, properties_to_extract)
-    logging.info("Done fetching properties")
-
+# NBNB-AS: Move this ?
+def find_active_and_gasless_cells(grid: Grid, properties, do_logging: bool = False):
     act_num = grid.export_actnum().numpy_copy()
     active = np.where(act_num > 0)[0]
-    logging.info(f"Number of grid cells                    : {len(act_num)}")
-    logging.info(f"Number of active grid cells             : {len(active)}")
     if _is_subset(["SGAS", "AMFG"], list(properties.keys())):
         gasless = _identify_gas_less_cells(properties["SGAS"], properties["AMFG"])
     elif _is_subset(["SGAS", "XMF2"], list(properties.keys())):
@@ -427,8 +412,54 @@ def _extract_source_data(
         )
         error_text += "SGAS+AMFG or SGAS+XMF2."
         raise RuntimeError(error_text)
+
+    if do_logging:
+        logging.info(f"Number of grid cells                    : {len(act_num):>10}")
+        logging.info(f"Number of active grid cells             : {len(active):>10}")
+        logging.info(
+            f"Number of active non-gasless grid cells : {len(active[~gasless]):>10}"
+        )
+
+    return active, gasless
+
+
+# pylint: disable=too-many-arguments
+def _extract_source_data(
+    grid_file: str,
+    unrst_file: str,
+    properties_to_extract: List[str],
+    zone_info: ZoneInfo,
+    region_info: RegionInfo,
+    init_file: Optional[str] = None,
+) -> SourceData:
+    # pylint: disable=too-many-locals, too-many-statements
+    """Extracts the properties in properties_to_extract from Grid files
+
+    Args:
+      grid_file (str): Path to EGRID-file
+      unrst_file (str): Path to UNRST-file
+      properties_to_extract (List): Names of the properties to be extracted
+      init_file (str): Path to INIT-file
+      zone_info (ZoneInfo): Zone information
+      region_info (Dict): Region information
+
+    Returns:
+      SourceData
+
+    """
+    logging.info("Start extracting source data")
+    grid = Grid(grid_file)
+    unrst = ResdataFile(unrst_file)
+    try:
+        init = ResdataFile(init_file)
+    except Exception:
+        init = None
+        logging.info("No INIT-file loaded")
+    properties, dates = _fetch_properties(unrst, properties_to_extract)
+    logging.info("Done fetching properties")
+
+    active, gasless = find_active_and_gasless_cells(grid, properties, True)
     global_active_idx = active[~gasless]
-    logging.info(f"Number of active non-gasless grid cells : {len(global_active_idx)}")
 
     properties_reduced = _reduce_properties(properties, ~gasless)
     # Tuple with (x,y,z) for each cell:
@@ -441,13 +472,14 @@ def _extract_source_data(
 
     vol0 = [grid.cell_volume(global_index=x) for x in global_active_idx]
     properties_reduced["VOL"] = {d: vol0 for d in dates}
-    try:
-        porv = init["PORV"]
-        properties_reduced["PORV"] = {
-            d: porv[0].numpy_copy()[global_active_idx] for d in dates
-        }
-    except KeyError:
-        pass
+    if init is not None:
+        try:
+            porv = init["PORV"]
+            properties_reduced["PORV"] = {
+                d: porv[0].numpy_copy()[global_active_idx] for d in dates
+            }
+        except KeyError:
+            pass
     source_data = SourceData(
         cells_x,
         cells_y,
@@ -477,40 +509,40 @@ def _check_grid_dimensions(
 
 
 def _process_zones(
-    zone_info: Dict,
+    zone_info: ZoneInfo,
     grid: Grid,
     grid_file: str,
     global_active_idx: np.ndarray,
 ) -> Optional[np.ndarray]:
     zone = None
-    if zone_info["source"] is None:
+    if zone_info.source is None:
         logging.info("No zone info specified")
-    if zone_info["source"] is not None:
+    else:
         logging.info("Using zone info")
-        if zone_info["zranges"] is not None:
+        if zone_info.zranges is not None:
             zone_array = np.zeros(
                 (grid.get_nx(), grid.get_ny(), grid.get_nz()), dtype=int
             )
-            zonevals = [int(x) for x in range(len(zone_info["zranges"]))]
-            zone_info["int_to_zone"] = [f"Zone_{x}" for x in range(len(zonevals))]
+            zonevals = [int(x) for x in range(len(zone_info.zranges))]
+            zone_info.int_to_zone = [f"Zone_{x}" for x in range(len(zonevals))]
             for zv, zr, zn in zip(
                 zonevals,
-                list(zone_info["zranges"].values()),
-                zone_info["zranges"].keys(),
+                list(zone_info.zranges.values()),
+                zone_info.zranges.keys(),
             ):
                 zone_array[:, :, zr[0] - 1 : zr[1]] = zv
-                zone_info["int_to_zone"][zv] = zn
+                zone_info.int_to_zone[zv] = zn
             zone = zone_array.flatten(order="F")[global_active_idx]
         else:
             xtg_grid = xtgeo.grid_from_file(grid_file)
             _check_grid_dimensions(
-                zone_info["source"],
+                zone_info.source,
                 grid_file,
                 xtg_grid.ncol,
                 xtg_grid.nrow,
                 xtg_grid.nlay,
             )
-            zone = xtgeo.gridproperty_from_file(zone_info["source"], grid=xtg_grid)
+            zone = xtgeo.gridproperty_from_file(zone_info.source, grid=xtg_grid)
             try:
                 zone_name_dict = zone.codes
                 zone_values = list(zone_name_dict.keys())
@@ -526,13 +558,13 @@ def _process_zones(
                     "This might cause problems with the calculations for "
                     "containment in different zones."
                 )
-            zone_info["int_to_zone"] = [None] * (np.max(intvals) + 1)
+            zone_info.int_to_zone = [None] * (np.max(intvals) + 1)
             for zv in intvals:
                 if zv >= 0:
                     if zv in zone_values:
-                        zone_info["int_to_zone"][zv] = zone_name_dict[zv]
+                        zone_info.int_to_zone[zv] = zone_name_dict[zv]
                     else:
-                        zone_info["int_to_zone"][zv] = f"Zone_{zv}"
+                        zone_info.int_to_zone[zv] = f"Zone_{zv}"
                         logging.info(
                             f"Value {zv} in roff-grid not found in Codes."
                             f" Using generic zone name Zone_{zv}."
@@ -544,25 +576,25 @@ def _process_zones(
 
 
 def _process_regions(
-    region_info: Dict,
+    region_info: RegionInfo,
     grid: Grid,
     grid_file: str,
-    init: ResdataFile,
+    init: Optional[ResdataFile],
     active: np.ndarray,
     gasless: np.ndarray,
 ) -> Optional[np.ndarray]:
     region = None
-    if region_info["source"] is not None:
+    if region_info.source is not None:
         logging.info("Using regions info")
         xtg_grid = xtgeo.grid_from_file(grid_file)
         _check_grid_dimensions(
-            region_info["source"],
+            region_info.source,
             grid_file,
             xtg_grid.ncol,
             xtg_grid.nrow,
             xtg_grid.nlay,
         )
-        region = xtgeo.gridproperty_from_file(region_info["source"], grid=xtg_grid)
+        region = xtgeo.gridproperty_from_file(region_info.source, grid=xtg_grid)
         try:
             region_name_dict = region.codes
             region_values = list(region_name_dict.keys())
@@ -578,13 +610,13 @@ def _process_regions(
                 "This might cause problems with the calculations for "
                 "containment in different regions."
             )
-        region_info["int_to_region"] = [None] * (np.max(intvals) + 1)
+        region_info.int_to_region = [None] * (np.max(intvals) + 1)
         for rv in intvals:
             if rv >= 0:
                 if rv in region_values:
-                    region_info["int_to_region"][rv] = region_name_dict[rv]
+                    region_info.int_to_region[rv] = region_name_dict[rv]
                 else:
-                    region_info["int_to_region"][rv] = f"Region_{rv}"
+                    region_info.int_to_region[rv] = f"Region_{rv}"
                     logging.info(
                         f"Value {rv} in roff-grid not found in Codes."
                         f" Using generic region name Region_{rv}."
@@ -592,30 +624,35 @@ def _process_regions(
             else:
                 logging.info("Ignoring negative value in grid from region file.")
         region = np.array(region[active[~gasless]], dtype=int)
-    elif region_info["property_name"] is not None:
-        try:
-            logging.info(
-                f"Try reading region information ({region_info['property_name']}"
-                f" property) from INIT-file."
-            )
-            region = np.array(init[region_info["property_name"]][0], dtype=int)
-            if region.shape[0] == grid.get_nx() * grid.get_ny() * grid.get_nz():
-                region = region[active]
-            regvals = np.unique(region)
-            region_info["int_to_region"] = [None] * (np.max(regvals) + 1)
-            for rv in regvals:
-                if rv >= 0:
-                    region_info["int_to_region"][rv] = f"Region_{rv}"
-                else:
-                    logging.info(
-                        f"Ignoring negative value in {region_info['property_name']}."
-                    )
-            logging.info("Region information successfully read from INIT-file")
-            region = region[~gasless]
-        except KeyError:
-            logging.info("Region information not found in INIT-file.")
+    elif region_info.property_name is not None:
+        if init is None:
+            logging.info("No INIT-file to use for region information.")
             region = None
-            region_info["int_to_region"] = None
+            region_info.int_to_region = None
+        else:
+            try:
+                logging.info(
+                    f"Try reading region information ({region_info.property_name}"
+                    f" property) from INIT-file."
+                )
+                region = np.array(init[region_info.property_name][0], dtype=int)
+                if region.shape[0] == grid.get_nx() * grid.get_ny() * grid.get_nz():
+                    region = region[active]
+                regvals = np.unique(region)
+                region_info.int_to_region = [None] * (np.max(regvals) + 1)
+                for rv in regvals:
+                    if rv >= 0:
+                        region_info.int_to_region[rv] = f"Region_{rv}"
+                    else:
+                        logging.info(
+                            f"Ignoring negative value in {region_info.property_name}."
+                        )
+                logging.info("Region information successfully read from INIT-file")
+                region = region[~gasless]
+            except KeyError:
+                logging.info("Region information not found in INIT-file.")
+                region = None
+                region_info.int_to_region = None
     return region
 
 
@@ -655,7 +692,7 @@ def _pflotran_co2mass(
     source_data: SourceData,
     co2_molar_mass: float = DEFAULT_CO2_MOLAR_MASS,
     water_molar_mass: float = DEFAULT_WATER_MOLAR_MASS,
-) -> Dict:
+) -> Dict[str, List[np.ndarray]]:
     """
     Calculates CO2 mass based on the existing properties in PFlotran
 
@@ -711,7 +748,7 @@ def _pflotran_co2mass(
 
 def _eclipse_co2mass(
     source_data: SourceData, co2_molar_mass: float = DEFAULT_CO2_MOLAR_MASS
-) -> Dict:
+) -> Dict[str, List[np.ndarray]]:
     """
     Calculates CO2 mass based on the existing properties in Eclipse
 
@@ -1062,12 +1099,12 @@ def _calculate_co2_data_from_source_data(
             co2_mass = {
                 co2_mass_output.data_list[t].date: (
                     [
-                        co2_mass_output.data_list[t].aqu_phase,
+                        co2_mass_output.data_list[t].dis_phase,
                         co2_mass_output.data_list[t].gas_phase,
                     ]
                     if source_data.SGSTRAND is None and source_data.SGTRH is None
                     else [
-                        co2_mass_output.data_list[t].aqu_phase,
+                        co2_mass_output.data_list[t].dis_phase,
                         co2_mass_output.data_list[t].gas_phase,
                         co2_mass_output.data_list[t].trapped_gas_phase,
                         co2_mass_output.data_list[t].free_gas_phase,
@@ -1111,6 +1148,7 @@ def _calculate_co2_data_from_source_data(
                 source_data.get_region(),
             )
         else:
+            _convert_from_kg_to_tons(co2_mass_output)
             co2_amount = co2_mass_output
     elif calc_type == CalculationType.CELL_VOLUME:
         props_idx = np.where(
@@ -1163,11 +1201,23 @@ def _calculate_co2_data_from_source_data(
     return co2_amount
 
 
+def _convert_from_kg_to_tons(co2_mass_output: Co2Data):
+    co2_mass_output.units = "tons"
+    for values in co2_mass_output.data_list:
+        for x in [
+            values.dis_phase,
+            values.gas_phase,
+            values.trapped_gas_phase,
+            values.free_gas_phase,
+        ]:
+            x *= 0.001
+
+
 def calculate_co2(
     grid_file: str,
     unrst_file: str,
-    zone_info: Dict,
-    region_info: Dict,
+    zone_info: ZoneInfo,
+    region_info: RegionInfo,
     residual_trapping: bool = False,
     calc_type_input: str = "mass",
     init_file: Optional[str] = None,
@@ -1180,19 +1230,19 @@ def calculate_co2(
       unrst_file (str): Path to UNRST-file
       calc_type_input (str): Input string with calculation type to perform
       init_file (str): Path to INIT-file
-      zone_info (Dict): Dictionary with zone information
-      region_info (Dict): Dictionary with region information
+      zone_info (ZoneInfo): Zone information
+      region_info (Dict): Region information
       residual_trapping (bool): Calculate residual trapping or not
 
     Returns:
       CO2Data
 
     """
-    PROPERTIES_TO_EXTRACT = RELEVANT_PROPERTIES.copy()
+    properties_to_extract = RELEVANT_PROPERTIES.copy()
     if residual_trapping:
-        PROPERTIES_TO_EXTRACT.extend(["SGSTRAND", "SGTRH"])
+        properties_to_extract.extend(["SGSTRAND", "SGTRH"])
     source_data = _extract_source_data(
-        grid_file, unrst_file, PROPERTIES_TO_EXTRACT, zone_info, region_info, init_file
+        grid_file, unrst_file, properties_to_extract, zone_info, region_info, init_file
     )
     calc_type = _set_calc_type_from_input_string(calc_type_input)
     co2_data = _calculate_co2_data_from_source_data(

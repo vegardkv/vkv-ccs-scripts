@@ -55,7 +55,26 @@ def parse_arguments(arguments):
         help="Folder root name ($-alias available in config file)",
         default=None,
     )
+    parser.add_argument(
+        "--gridfolder",
+        help="Path to output 3d grid folder (only for co2 mass maps,"
+        " overrides yaml file)",
+        default=None,
+    )
     return parser.parse_args(arguments)
+
+
+def _replace_default_dummies_from_ert(args):
+    if args.eclroot == "-1":
+        args.eclroot = None
+    if args.mapfolder == "-1":
+        args.mapfolder = None
+    if args.plotfolder == "-1":
+        args.plotfolder = None
+    if args.gridfolder == "-1":
+        args.gridfolder = None
+    if args.folderroot == "-1":
+        args.folderroot = None
 
 
 def process_arguments(arguments) -> RootConfig:
@@ -64,6 +83,7 @@ def process_arguments(arguments) -> RootConfig:
     in the `RootConfig` class
     """
     parsed_args = parse_arguments(arguments)
+    _replace_default_dummies_from_ert(parsed_args)
     replacements = {}
     if parsed_args.eclroot is not None:
         replacements["eclroot"] = parsed_args.eclroot
@@ -73,6 +93,7 @@ def process_arguments(arguments) -> RootConfig:
         parsed_args.config,
         parsed_args.mapfolder,
         parsed_args.plotfolder,
+        parsed_args.gridfolder,
         replacements,
     )
     return config
@@ -82,13 +103,14 @@ def parse_yaml(
     yaml_file: Union[str],
     map_folder: Optional[str],
     plot_folder: Optional[str],
+    grid_folder: Optional[str],
     replacements: Dict[str, str],
 ) -> RootConfig:
     """
     Parses a yaml file to a corresponding `RootConfig` object. See `load_yaml` for
     details.
     """
-    config = load_yaml(yaml_file, map_folder, plot_folder, replacements)
+    config = load_yaml(yaml_file, map_folder, plot_folder, grid_folder, replacements)
     co2_mass_settings = (
         None
         if "co2_mass_settings" not in config
@@ -108,6 +130,7 @@ def load_yaml(
     yaml_file: str,
     map_folder: Optional[str],
     plot_folder: Optional[str],
+    grid_folder: Optional[str],
     replacements: Dict[str, str],
 ) -> Dict[str, Any]:
     """
@@ -133,6 +156,8 @@ def load_yaml(
         config["output"]["mapfolder"] = map_folder
     if plot_folder is not None:
         config["output"]["plotfolder"] = plot_folder
+    if grid_folder is not None:
+        config["output"]["gridfolder"] = grid_folder
     # Handle things that is implemented in avghc, but not in this module
     redundant_keywords = set(config["input"].keys()).difference(
         {"properties", "grid", "dates"}
@@ -166,7 +191,11 @@ def extract_properties(
         return properties
     for spec in property_spec:
         try:
-            names = "all" if spec.name is None else [spec.name]
+            names = (
+                "all"
+                if spec.name is None
+                else [spec.name] if isinstance(spec.name, str) else spec.name
+            )
             props = xtgeo.gridproperties_from_file(
                 spec.source,
                 names=names,
@@ -177,6 +206,8 @@ def extract_properties(
             props = [xtgeo.gridproperty_from_file(spec.source, name=spec.name)]
         if spec.lower_threshold is not None:
             for prop in props:
+                if not isinstance(prop.values.mask, np.ndarray):
+                    prop.values.mask = np.asarray(prop.values.mask)
                 prop.values.mask[prop.values < spec.lower_threshold] = True
         # Check if any of the properties missing a date had date as part of the file
         # stem, separated by a "--"
@@ -192,7 +223,7 @@ def extract_properties(
                 prop.name += f"--{date}"
             if prop.date is not None and prop.name is not None:
                 if prop.name.split("_")[-1] == prop.date:
-                    prop.name = prop.name.replace("_", "--")
+                    prop.name = "--".join(prop.name.rsplit("_", 1))
         if len(dates) > 0:
             props = [p for p in props if p.date in dates]
         properties += props

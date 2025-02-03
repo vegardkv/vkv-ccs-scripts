@@ -18,6 +18,7 @@ class AggregationMethod(Enum):
     MIN = "min"
     MEAN = "mean"
     SUM = "sum"
+    DISTRIBUTE = "distribute"
 
 
 @dataclass
@@ -71,6 +72,8 @@ class ComputeSettings:
     weight_by_dz: bool = False
     all: bool = True
     zone: bool = True
+    aggregate_map: bool = True
+    indicator_map: bool = False
 
     def __post_init__(self):
         if isinstance(self.aggregation, str):
@@ -87,7 +90,6 @@ class CO2MassSettings:
     unrst_source: str
     init_source: str
     maps: Optional[List[str]] = None
-    zones: Optional[List[str]] = None
     residual_trapping: Optional[bool] = False
 
     def __post_init__(self):
@@ -114,6 +116,7 @@ class Output:
     plotfolder: Optional[str] = None
     use_plotly: bool = False
     aggregation_tag: bool = True
+    gridfolder: Optional[str] = None
 
     def __post_init__(self):
         if self.mapfolder == "fmu-dataio":

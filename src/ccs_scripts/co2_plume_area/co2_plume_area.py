@@ -27,6 +27,8 @@ import numpy as np
 import pandas as pd
 import xtgeo
 
+from ccs_scripts.co2_containment.co2_containment import str_to_bool
+
 DESCRIPTION = """
 Calculates the area of the CO2 plume for each formation and time step, for both
 SGAS and AMFG (Pflotran) / YMF2 (Eclipse).
@@ -42,7 +44,9 @@ xtgeo_logger.setLevel(logging.WARNING)
 
 def _make_parser():
     parser = argparse.ArgumentParser(description="Calculate plume area")
-    parser.add_argument("input", help="Path to maps created through grid3d-maps")
+    parser.add_argument(
+        "input", help="Path to maps created through grid3d_aggregate_map"
+    )
     parser.add_argument(
         "--output_csv",
         help="Path to output CSV file",
@@ -51,13 +55,17 @@ def _make_parser():
     parser.add_argument(
         "--no_logging",
         help="Skip print of detailed information during execution of script",
-        action="store_true",
+        type=str_to_bool,
+        nargs="?",
+        const=True,
     )
     parser.add_argument(
         "--debug",
         help="Enable print of debugging data during execution of script. "
         "Normally not necessary for most users.",
-        action="store_true",
+        type=str_to_bool,
+        nargs="?",
+        const=True,
     )
 
     return parser
@@ -124,8 +132,9 @@ def _neigh_nodes(x: Tuple[np.int64, np.int64]) -> set:
 
 def calculate_plume_area(path: str, rskey: str) -> Optional[List[List[float]]]:
     """
-    Finds plume area for each formation and year for a given rskey (for instance
-    SGAS or AMFG). The plume areas are found using data from surface files (.gri).
+    Finds plume area for each formation and year for a given rskey, for instance
+    SGAS (gas phase) or AMFG/XMF2 (dissolved phase). The plume areas are found
+    using data from surface files (.gri).
     """
     logging.info(f"Calculating plume area for           : {rskey}")
 
@@ -165,8 +174,16 @@ def calculate_plume_area(path: str, rskey: str) -> Optional[List[List[float]]]:
     return list_out
 
 
+def _replace_default_dummies_from_ert(args):
+    if args.no_logging == "-1":
+        args.no_logging = False
+    if args.debug == "-1":
+        args.debug = False
+
+
 def _read_args() -> Tuple[str, str]:
     args = _make_parser().parse_args()
+    _replace_default_dummies_from_ert(args)
     _setup_log_configuration(args)
 
     input_path = args.input
@@ -242,14 +259,14 @@ def _log_results(df: pd.DataFrame) -> None:
     n2 = len(f"{df_subset.max().max():.1f}") if len(columns) > 0 else 5
     logging.info("End state plume area:")
     for c in columns:
-        logging.info(f"    * {c:<{n1+1}}: {dfs[c].iloc[-1]:>{n2+1}.1f}")
+        logging.info(f"    * {c:<{n1 + 1}}: {dfs[c].iloc[-1]:>{n2 + 1}.1f}")
 
 
 def main():
     """
     Reads directory of input surface files (.gri) and calculates plume area
-    for SGAS and AMFG per formation and year. Collects the results into a CSV
-    file.
+    for SGAS (gas phase) and AMFG/XMF2 (dissolved phase) per formation and year.
+    Collects the results into a CSV file.
     """
     input_path, output_path = _read_args()
 
@@ -258,25 +275,25 @@ def main():
         output_path = str(p)
     _log_input_configuration(input_path, output_path)
 
-    sgas_df, amfg_df, xmf2_df = None, None, None
-    sgas_results = calculate_plume_area(input_path, "sgas")
-    if sgas_results:
-        logging.info("\nDone calculating SGAS plume areas.")
-        sgas_df = _convert_to_data_frame(sgas_results, "SGAS")
+    df_gas, df_dissolved = None, None
+    results_gas = calculate_plume_area(input_path, "sgas")
+    if results_gas:
+        logging.info("\nDone calculating plume areas for SGAS (gas phase).")
+        df_gas = _convert_to_data_frame(results_gas, "gas_phase")
 
-    amfg_results = calculate_plume_area(input_path, "amfg")
-    if amfg_results:
-        logging.info("\nDone calculating AMFG plume areas.")
-        amfg_df = _convert_to_data_frame(amfg_results, "AMFG")
-
-    xmf2_results = calculate_plume_area(input_path, "xmf2")
-    if xmf2_results:
-        logging.info("\nDone calculating XMF2 plume areas.")
-        xmf2_df = _convert_to_data_frame(xmf2_results, "XMF2")
+    results_dissolved = calculate_plume_area(input_path, "AMFG")
+    if results_dissolved:
+        logging.info("\nDone calculating plume areas for AMFG (dissolved phase).")
+        df_dissolved = _convert_to_data_frame(results_dissolved, "dissolved_phase")
+    else:
+        results_dissolved = calculate_plume_area(input_path, "XMF2")
+        if results_dissolved:
+            logging.info("\nDone calculating plume areas for XMF2 (dissolved phase).")
+            df_dissolved = _convert_to_data_frame(results_dissolved, "dissolved_phase")
 
     # Merge the data frames
     df = None
-    for df_prop in [sgas_df, amfg_df, xmf2_df]:
+    for df_prop in [df_gas, df_dissolved]:
         if df_prop is not None:
             if df is None:
                 df = df_prop

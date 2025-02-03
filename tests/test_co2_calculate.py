@@ -10,7 +10,9 @@ import xtgeo
 from ccs_scripts.co2_containment.co2_calculation import (
     RELEVANT_PROPERTIES,
     CalculationType,
+    RegionInfo,
     SourceData,
+    ZoneInfo,
     _calculate_co2_data_from_source_data,
     _extract_source_data,
 )
@@ -20,16 +22,16 @@ from ccs_scripts.co2_containment.co2_containment import (
     sort_and_replace_nones,
 )
 
-zone_info = {
-    "source": None,
-    "zranges": None,
-    "int_to_zone": None,
-}
-region_info = {
-    "source": None,
-    "int_to_region": None,
-    "property_name": None,
-}
+zone_info = ZoneInfo(
+    source=None,
+    zranges=None,
+    int_to_zone=None,
+)
+region_info = RegionInfo(
+    source=None,
+    int_to_region=None,
+    property_name=None,
+)
 
 
 def _random_prop(
@@ -94,8 +96,8 @@ def _calc_and_compare(poly, masses, poly_hazardous=None):
         containment_polygon=poly,
         hazardous_polygon=poly_hazardous,
         calc_type_input="mass",
-        zone_info=zone_info,
-        region_info=region_info,
+        int_to_zone=zone_info.int_to_zone,
+        int_to_region=region_info.int_to_region,
     )
     sort_and_replace_nones(contained)
     total_values = contained[
@@ -122,17 +124,17 @@ def test_single_poly_co2_containment():
         ]
     )
     table = _calc_and_compare(poly, dummy_co2_masses)
-    assert extract_amount(table, "contained", "gas") == pytest.approx(90.262207)
+    assert extract_amount(table, "contained", "gas") == pytest.approx(0.090262207)
     assert extract_amount(
         table,
         "contained",
-        "aqueous",
-    ) == pytest.approx(172.72921760648467)
+        "dissolved",
+    ) == pytest.approx(0.1727292176064847)
     assert extract_amount(table, "hazardous", "gas") == pytest.approx(0.0)
     assert extract_amount(
         table,
         "hazardous",
-        "aqueous",
+        "dissolved",
     ) == pytest.approx(0.0)
 
 
@@ -168,17 +170,17 @@ def test_multi_poly_co2_containment():
         table,
         "contained",
         "gas",
-    ) == pytest.approx(123.70267352027123)
+    ) == pytest.approx(0.12370267352027123)
     assert extract_amount(
         table,
         "contained",
-        "aqueous",
-    ) == pytest.approx(252.79970312163525)
+        "dissolved",
+    ) == pytest.approx(0.25279970312163525)
     assert extract_amount(table, "hazardous", "gas") == pytest.approx(0.0)
     assert extract_amount(
         table,
         "hazardous",
-        "aqueous",
+        "dissolved",
     ) == pytest.approx(0.0)
 
 
@@ -206,22 +208,22 @@ def test_hazardous_poly_co2_containment():
         ]
     )
     table = _calc_and_compare(poly, dummy_co2_masses, poly_hazardous)
-    assert extract_amount(table, "contained", "gas") == pytest.approx(90.262207)
+    assert extract_amount(table, "contained", "gas") == pytest.approx(0.090262207)
     assert extract_amount(
         table,
         "contained",
-        "aqueous",
-    ) == pytest.approx(172.72921760648467)
+        "dissolved",
+    ) == pytest.approx(0.17272921760648467)
     assert extract_amount(
         table,
         "hazardous",
         "gas",
-    ) == pytest.approx(12.687891108274542)
+    ) == pytest.approx(0.012687891108274542)
     assert extract_amount(
         table,
         "hazardous",
-        "aqueous",
-    ) == pytest.approx(20.33893251315071)
+        "dissolved",
+    ) == pytest.approx(0.02033893251315071)
 
 
 def test_reek_grid():
@@ -279,19 +281,19 @@ def test_reek_grid():
         containment_polygon=reek_poly,
         hazardous_polygon=reek_poly_hazardous,
         calc_type_input="mass",
-        zone_info=zone_info,
-        region_info=region_info,
+        int_to_zone=zone_info.int_to_zone,
+        int_to_region=region_info.int_to_region,
     )
     sort_and_replace_nones(table)
     cs = ["total"] * 3 + ["contained"] + ["hazardous"] * 2
-    ps = ["total", "gas", "aqueous", "gas", "total", "gas"]
+    ps = ["total", "gas", "dissolved", "gas", "total", "gas"]
     amounts = [
-        696171.20388324,
-        7650.233009712884,
-        688520.9708735272,
-        115.98058252427084,
-        10282.11650485436,
-        112.99029126213496,
+        696.17120388324,
+        7.650233009712884,
+        688.5209708735272,
+        0.11598058252427084,
+        10.28211650485436,
+        0.11299029126213496,
     ]
     for c, p, amount in zip(cs, ps, amounts):
         assert extract_amount(table, c, p, 0) == pytest.approx(amount)
@@ -305,8 +307,8 @@ def test_reek_grid():
         containment_polygon=reek_poly,
         hazardous_polygon=reek_poly_hazardous,
         calc_type_input="actual_volume",
-        zone_info=zone_info,
-        region_info=region_info,
+        int_to_zone=zone_info.int_to_zone,
+        int_to_region=region_info.int_to_region,
     )
     sort_and_replace_nones(table2)
     amounts2 = [
@@ -343,24 +345,24 @@ def test_reek_grid():
         containment_polygon=reek_poly,
         hazardous_polygon=reek_poly_hazardous,
         calc_type_input="mass",
-        zone_info=zone_info,
-        region_info=region_info,
+        int_to_zone=zone_info.int_to_zone,
+        int_to_region=region_info.int_to_region,
         residual_trapping=True,
     )
     sort_and_replace_nones(table3)
     cs3 = ["total"] * 4 + ["contained"] * 2 + ["hazardous"] * 3
     gas_part = ["trapped_gas", "free_gas"]
-    ps3 = ["total"] + gas_part + ["aqueous"] + gas_part + ["total"] + gas_part
+    ps3 = ["total"] + gas_part + ["dissolved"] + gas_part + ["total"] + gas_part
     amounts3 = [
-        696171.20388324,
-        4590.13980582773,
-        3060.093203885154,
-        688520.9708735272,
-        69.58834951456248,
-        46.39223300970832,
-        10282.11650485436,
-        67.79417475728094,
-        45.19611650485396,
+        696.17120388324,
+        4.59013980582773,
+        3.060093203885154,
+        688.5209708735272,
+        0.06958834951456248,
+        0.04639223300970832,
+        10.28211650485436,
+        0.06779417475728094,
+        0.04519611650485396,
     ]
     for c, p, amount in zip(cs3, ps3, amounts3):
         assert extract_amount(table3, c, p, 0) == pytest.approx(amount)
@@ -373,14 +375,14 @@ def test_reek_grid():
         containment_polygon=reek_poly,
         hazardous_polygon=reek_poly_hazardous,
         calc_type_input="actual_volume",
-        zone_info=zone_info,
-        region_info=region_info,
+        int_to_zone=zone_info.int_to_zone,
+        int_to_region=region_info.int_to_region,
         residual_trapping=True,
     )
     sort_and_replace_nones(table4)
     cs4 = ["total"] * 4 + ["contained"] * 2 + ["hazardous"] * 3
     gas_part = ["trapped_gas", "free_gas"]
-    ps4 = ["total"] + gas_part + ["aqueous"] + gas_part + ["total"] + gas_part
+    ps4 = ["total"] + gas_part + ["dissolved"] + gas_part + ["total"] + gas_part
     amounts4 = [
         1018.524203883313,
         198.0019398057147,
