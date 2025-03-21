@@ -530,8 +530,8 @@ def _setup_log_configuration(arguments: argparse.Namespace) -> None:
 
 
 def _log_input_configuration(arguments: argparse.Namespace) -> None:
-    version = "v0.8.0"
-    is_dev_version = False
+    version = "v0.9.0"
+    is_dev_version = True
     if is_dev_version:
         version += "_dev"
         try:
@@ -562,6 +562,8 @@ def _log_input_configuration(arguments: argparse.Namespace) -> None:
     logging.info(f"Python version      : {py_version}")
 
     logging.info(f"\nCase                    : {arguments.case}")
+    if not os.path.isabs(arguments.case):
+        logging.info(f"  => Absolute path      : {os.path.abspath(arguments.case)}")
     logging.info(
         f"Configuration YAML-file : "
         f"{arguments.config_file if arguments.config_file != '' else 'Not specified'}"
@@ -1282,8 +1284,6 @@ def main():
         args.threshold_dissolved,
     )
 
-    output_file = _find_output_file(args.output_csv, args.case)
-
     df = _collect_results_into_dataframe(
         all_results,
         config,
@@ -1291,8 +1291,13 @@ def main():
     )
     _log_results(df)
     _log_results_detailed(df)
+
+    output_file = _find_output_file(args.output_csv, args.case)
+    logging.info("\nExport results to CSV file")
+    logging.info(f"    - File path: {output_file}")
+    if os.path.isfile(output_file):
+        logging.info("Output CSV file already exists => Will overwrite existing file")
     df.to_csv(output_file, index=False, na_rep="0.0")
-    logging.info("\nDone exporting results to CSV file.\n")
 
     return 0
 

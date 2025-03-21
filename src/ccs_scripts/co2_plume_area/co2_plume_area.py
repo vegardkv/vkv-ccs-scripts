@@ -197,8 +197,8 @@ def _read_args() -> Tuple[str, str]:
 
 
 def _log_input_configuration(input_path: str, output_path: str) -> None:
-    version = "v0.8.0"
-    is_dev_version = False
+    version = "v0.9.0"
+    is_dev_version = True
     if is_dev_version:
         version += "_dev"
         try:
@@ -303,8 +303,13 @@ def main():
     _log_results(df)
 
     if df is not None:
+        logging.info("\nExport results to CSV file")
+        logging.info(f"    - File path: {output_path}")
+        if os.path.isfile(output_path):
+            logging.info(
+                "Output CSV file already exists => Will overwrite existing file"
+            )
         df.to_csv(output_path, index=False)
-        logging.info("\nDone exporting results to CSV file.\n")
 
     return 0
 
