@@ -342,7 +342,6 @@ def _property_to_map(
         weight=scipy.sparse.coo_matrix((weights, (rows, cols)), shape=shape).tocsc(),
         method=method,
     )
-
     res += shift
     res = res.reshape(nx, ny)
     return res
