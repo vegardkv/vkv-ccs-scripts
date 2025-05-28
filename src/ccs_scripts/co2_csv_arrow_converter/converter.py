@@ -109,9 +109,15 @@ def apply_to_realizations(
 
         conversions = 0
         # Try creating missing Arrow files for all realizations
-        conversions += try_convert_csv_to_arrow(csv_path_1, arrow_path_1, overwrite_arrow)
-        conversions += try_convert_csv_to_arrow(csv_path_2, arrow_path_2, overwrite_arrow)
-        conversions += try_convert_containment_csv_to_arrow(csv_path_3, arrow_path_3, kept_columns, overwrite_arrow)
+        conversions += try_convert_csv_to_arrow(
+            csv_path_1, arrow_path_1, overwrite_arrow
+        )
+        conversions += try_convert_csv_to_arrow(
+            csv_path_2, arrow_path_2, overwrite_arrow
+        )
+        conversions += try_convert_containment_csv_to_arrow(
+            csv_path_3, arrow_path_3, kept_columns, overwrite_arrow
+        )
 
         # Try creating missing CSV files for all realizations
         conversions += try_convert_arrow_to_csv(csv_path_1, arrow_path_1, overwrite_csv)
@@ -134,13 +140,15 @@ def _write_data_frame_to_arrow(df: pd.DataFrame, arrow_path: Path) -> None:
     # schema, since we cannot create a data frame that is directly convertible to
     # Arrow.
     dates = [
-        datetime.datetime(*[int(t) for t in d.split("-")])
+        datetime.datetime(*[int(t) for t in d.split("-")])  # type: ignore[arg-type]
         for d in df["DATE"]
     ]
-    dates_ms = [(d - datetime.datetime(1970, 1, 1)).total_seconds() * 1000 for d in dates]
+    dates_ms = [
+        (d - datetime.datetime(1970, 1, 1)).total_seconds() * 1000 for d in dates
+    ]
     non_date_df = df.drop(columns=["DATE"])
 
-    fields = [pa.field("DATE", pa.timestamp('ms'))]
+    fields = [pa.field("DATE", pa.timestamp("ms"))]
     for col in non_date_df.columns:
         # Use default type inference for other columns
         fields.append(pa.field(col, pa.infer_type(non_date_df[col])))
@@ -182,8 +190,10 @@ def _read_data_frame_from_arrow(arrow_path: Path) -> pd.DataFrame:
 
 def main():
     import argparse
-    
-    parser = argparse.ArgumentParser(description="Create missing Arrow/CSV files for FMU realizations")
+
+    parser = argparse.ArgumentParser(
+        description="Create missing Arrow/CSV files for FMU realizations"
+    )
     parser.add_argument(
         "--root_dir",
         type=Path,
@@ -193,7 +203,7 @@ def main():
     parser.add_argument(
         "--realization-pattern",
         type=str,
-        help="Glob pattern (relative to current directory) for an FMU realization directory",
+        help="Glob pattern (relative to root_dir) for an FMU realization directory",
         default="realization-*/iter-*",
     )
     parser.add_argument(

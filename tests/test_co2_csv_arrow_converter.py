@@ -1,14 +1,15 @@
 import io
-import pyarrow as pa
-import pandas as pd
 import tempfile
 from pathlib import Path
 
+import pandas as pd
+import pyarrow as pa
 from pytest import fixture
+
 from ccs_scripts.co2_csv_arrow_converter.converter import (
     try_convert_arrow_to_csv,
-    try_convert_csv_to_arrow,
     try_convert_containment_csv_to_arrow,
+    try_convert_csv_to_arrow,
 )
 
 
@@ -25,13 +26,16 @@ def mock_data_frame():
 2400-01-01,3864100.0,3773300.0,1244800.0,1201000.0,8809100.0,8757100.0,8557700.0,8770100.0,8627900.0,8423400.0,8190300.0,8501100.0
 2450-01-01,3913900.0,3813200.0,1253800.0,1207100.0,8809100.0,8757100.0,8557700.0,8770100.0,8607900.0,8363300.0,8150100.0,8480800.0
 2500-01-01,3943800.0,3832200.0,1234800.0,1217000.0,8809100.0,8757100.0,8557700.0,8770100.0,8675900.0,8476400.0,8223100.0,8588800.0
-    """
+"""  # noqa: E501
     return pd.read_csv(io.StringIO(csv_text))
 
 
 @fixture
 def mock_containment_data_frame():
-    return pd.read_csv(Path(__file__).parent / "testdata_co2_tables" / "plume_mass.csv", parse_dates=["date"])
+    return pd.read_csv(
+        Path(__file__).parent / "testdata_co2_tables" / "plume_mass.csv",
+        parse_dates=["date"],
+    )
 
 
 def test_convert_csv_to_arrow(mock_data_frame):
@@ -74,7 +78,7 @@ def test_convert_arrow_to_csv(mock_data_frame):
         assert arrow_path.exists()
         assert try_convert_arrow_to_csv(csv_path, arrow_path)
         assert csv_path.exists()
-        
+
         # Test that the CSV file is not empty
         df = pd.read_csv(csv_path)
         assert not df.empty
