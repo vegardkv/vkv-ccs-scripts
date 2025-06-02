@@ -3,7 +3,7 @@ import logging
 import os
 import sys
 import tempfile
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional
 
 import numpy as np
 import xtgeo
@@ -15,7 +15,7 @@ from ccs_scripts.aggregate import (
     _parser,
     grid3d_aggregate_map,
 )
-from ccs_scripts.aggregate._config import RootConfig
+from ccs_scripts.aggregate._config import DEFAULT_LOWER_THRESHOLD, RootConfig
 from ccs_scripts.aggregate._utils import log_input_configuration
 from ccs_scripts.aggregate.grid3d_aggregate_map import _distribute_config_property
 
@@ -58,6 +58,33 @@ def _check_config(config_: RootConfig) -> None:
     config_.computesettings.aggregate_map = True
 
 
+def _check_threshold(
+    lower_threshold: float,
+    properties: List[xtgeo.GridProperty],
+) -> float:
+    min_value_props = min([p.values.min() for p in properties])
+    max_value_props = max([p.values.max() for p in properties])
+    if lower_threshold < 0:
+        if min_value_props >= 0:
+            warning_str = "\nWARNING: Specified lower threshold is negative, "
+            warning_str += "but no property values are negative."
+            warning_str += "\n         => Changing the lower threshold value:"
+            warning_str += f"\n            - Specified value: {lower_threshold:>8}"
+            lower_threshold = DEFAULT_LOWER_THRESHOLD
+            warning_str += f"\n            - Changed to     : {lower_threshold:>8}"
+            logging.warning(warning_str)
+    else:
+        if lower_threshold > max_value_props:
+            warning_str = "\nWARNING: Specified lower threshold is "
+            warning_str += "higher than the maximum property value in the grid."
+            warning_str += f"\n         - Specified value       : {lower_threshold:>8}"
+            warning_str += (
+                f"\n         - Maximum property value: {max_value_props:>8.4f}"
+            )
+            logging.warning(warning_str)
+    return lower_threshold
+
+
 def _log_t_prop(t_prop: dict[str, xtgeo.GridProperty]):
     col1 = 20
     col2 = 8
@@ -76,7 +103,7 @@ def _log_t_prop(t_prop: dict[str, xtgeo.GridProperty]):
 def calculate_migration_time_property(
     properties_files: str,
     property_name: str,
-    lower_threshold: Union[float, List],
+    lower_threshold: float,
     grid_file: Optional[str],
     dates: List[str],
 ) -> dict[str, xtgeo.GridProperty]:
@@ -90,6 +117,7 @@ def calculate_migration_time_property(
     properties = _parser.extract_properties(
         prop_spec, grid, dates, mask_low_values=False
     )
+    lower_threshold = _check_threshold(lower_threshold, properties)
     grid3d_aggregate_map._log_properties_info(properties)
     t_prop = _migration_time.generate_migration_time_property(
         properties, lower_threshold
