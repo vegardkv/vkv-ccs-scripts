@@ -3,7 +3,7 @@ CO2_CSV_ARROW_CONVERTER
 =======================
 
 .. argparse::
-   :module: ccs_scripts.co2_csv_arrow_converter.converter
+   :module: ccs_scripts.co2_csv_arrow_converter.co2_csv_arrow_converter
    :func: main
    :prog: co2_csv_arrow_converter
 
