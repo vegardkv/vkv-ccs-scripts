@@ -195,7 +195,7 @@ def main():
         description="Create missing Arrow/CSV files for FMU realizations"
     )
     parser.add_argument(
-        "--root_dir",
+        "--root-dir",
         type=Path,
         help="Root directory for the glob pattern",
         default=Path(".").resolve(),
