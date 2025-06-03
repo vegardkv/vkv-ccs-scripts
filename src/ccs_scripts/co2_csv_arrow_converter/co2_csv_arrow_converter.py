@@ -3,7 +3,7 @@
 # not the other, it will create the missing file.
 
 import datetime
-from enum import StrEnum
+from enum import Enum
 from pathlib import Path
 from typing import List
 
@@ -133,7 +133,7 @@ def apply_to_realizations(
         print(f"Processed {realization_dir}: {conversions} conversions made.")
 
 
-class _FileType(StrEnum):
+class _FileType(Enum):
     PLUME_EXTENT = "plume_extent"
     PLUME_AREA = "plume_area"
     CONTAINMENT = "containment"
