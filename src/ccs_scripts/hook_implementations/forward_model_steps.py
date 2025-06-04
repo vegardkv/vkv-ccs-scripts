@@ -5,6 +5,7 @@ from ert import (
     ForwardModelStepDocumentation,
     ForwardModelStepPlugin,
 )
+from ert import plugin as ert_plugin
 
 
 _CATEGORY = "modelling.reservoir"
@@ -92,6 +93,7 @@ class Co2ContainmentStep(ForwardModelStepPlugin):
 class Co2PlumeAreaStep(ForwardModelStepPlugin):
     def __init__(self):
         super().__init__(
+            name="CO2_PLUME_AREA",
             command=[
                 shutil.which("co2_plume_area"),
                 "<INPUT>",
@@ -120,6 +122,7 @@ class Co2PlumeAreaStep(ForwardModelStepPlugin):
 class Co2PlumeExtentStep(ForwardModelStepPlugin):
     def __init__(self):
         super().__init__(
+            name="CO2_PLUME_EXTENT",
             command=[
                 shutil.which("co2_plume_extent"),
                 "<CASE>",
@@ -200,6 +203,7 @@ class Co2CsvArrowConverterStep(ForwardModelStepPlugin):
 class Grid3dAggregateMapStep(ForwardModelStepPlugin):
     def __init__(self):
         super().__init__(
+            name="GRID3D_AGGREGATE_MAP",
             command=[
                 shutil.which("grid3d_aggregate_map"),
                 "--config",
@@ -241,6 +245,7 @@ class Grid3dAggregateMapStep(ForwardModelStepPlugin):
 class Grid3dCo2MassMapStep(ForwardModelStepPlugin):
     def __init__(self):
         super().__init__(
+            name="GRID3D_CO2_MASS_MAP",
             command=[
                 shutil.which("grid3d_co2_mass_map"),
                 "--config",
@@ -285,6 +290,7 @@ class Grid3dCo2MassMapStep(ForwardModelStepPlugin):
 class Grid3dMigrationTimeStep(ForwardModelStepPlugin):
     def __init__(self):
         super().__init__(
+            name="GRID3D_MIGRATION_TIME",
             command=[
                 shutil.which("grid3d_migration_time"),
                 "--config",
@@ -402,3 +408,15 @@ _EXAMPLES_GRID3D_MIGRATION_TIME = """
 
   FORWARD_MODEL GRID3D_MIGRATION_TIME(<CONFIG_MIGTIME>=conf.yml, <ECLROOT>=<ECLBASE>)
 """
+
+@ert_plugin(name="CCS_SCRIPTS")
+def installable_forward_model_steps() -> list[ForwardModelStepPlugin]:
+    return [
+        Co2ContainmentStep,
+        Co2PlumeAreaStep,
+        Co2PlumeExtentStep,
+        Co2CsvArrowConverterStep,
+        Grid3dAggregateMapStep,
+        Grid3dCo2MassMapStep,
+        Grid3dMigrationTimeStep,
+    ]
