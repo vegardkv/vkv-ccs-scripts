@@ -1,7 +1,6 @@
 import shutil
 
 import pytest
-import rstcheck_core.checker  # type: ignore
 from ert.plugins.plugin_manager import ErtPluginManager
 
 from ccs_scripts.hook_implementations import forward_model_steps
@@ -34,7 +33,6 @@ def test_hooks_are_installed_in_erts_plugin_manager(expected_jobs):
 
 def test_executables(expected_jobs):
     """Test executables listed in job configurations exist in $PATH"""
-    plugin_m = ErtPluginManager(plugins=[forward_model_steps])
     for job in expected_jobs:
         assert shutil.which(job.lower())
 

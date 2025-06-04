@@ -29,7 +29,6 @@ import xtgeo
 
 from ccs_scripts.co2_containment.co2_containment import str_to_bool
 
-
 xtgeo_logger = logging.getLogger("xtgeo")
 xtgeo_logger.setLevel(logging.WARNING)
 

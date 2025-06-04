@@ -7,7 +7,6 @@ from ert import (
 )
 from ert import plugin as ert_plugin
 
-
 _CATEGORY = "modelling.reservoir"
 
 
@@ -43,7 +42,7 @@ class Co2ContainmentStep(ForwardModelStepPlugin):
         }
 
     @staticmethod
-    def _commands() -> List[str]:
+    def _commands():
         return [
             shutil.which("co2_containment"),
             "<CASE>",
@@ -108,7 +107,7 @@ class Co2PlumeAreaStep(ForwardModelStepPlugin):
                 "<OUTPUT_CSV>": "share/results/tables/plume_area.csv",
                 "<NO_LOGGING>": -1,
                 "<DEBUG>": -1,
-            }
+            },
         )
 
     @staticmethod
@@ -155,7 +154,7 @@ class Co2PlumeExtentStep(ForwardModelStepPlugin):
                 "<COLUMN_NAME>": "",
                 "<NO_LOGGING>": -1,
                 "<DEBUG>": -1,
-            }
+            },
         )
 
     @staticmethod
@@ -408,6 +407,7 @@ _EXAMPLES_GRID3D_MIGRATION_TIME = """
 
   FORWARD_MODEL GRID3D_MIGRATION_TIME(<CONFIG_MIGTIME>=conf.yml, <ECLROOT>=<ECLBASE>)
 """
+
 
 @ert_plugin(name="CCS_SCRIPTS")
 def installable_forward_model_steps() -> list[ForwardModelStepPlugin]:
