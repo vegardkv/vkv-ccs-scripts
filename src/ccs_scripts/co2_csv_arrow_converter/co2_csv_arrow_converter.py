@@ -10,12 +10,6 @@ from typing import List
 import pandas as pd
 import pyarrow as pa
 
-DESCRIPTION = """This scripts checks all FMU realizations for missing arrow or
-csv files representing plume extent, area or containment data. If one exists,
-but not the other, it will create the missing file."""
-
-CATEGORY = "modelling.reservoir"
-
 
 def try_convert_csv_to_arrow(
     csv_path: Path,
