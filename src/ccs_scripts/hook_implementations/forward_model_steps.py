@@ -1,5 +1,5 @@
 import shutil
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from ert import (
     ForwardModelStepDocumentation,
