@@ -178,7 +178,7 @@ class Co2CsvArrowConverterStep(ForwardModelStepPlugin):
             default_mapping={
                 "<ROOT_DIR>": ".",
                 "<OPTIONS>": "",
-            }
+            },
         )
 
     @staticmethod
