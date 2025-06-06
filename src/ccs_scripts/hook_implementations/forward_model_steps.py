@@ -171,24 +171,14 @@ class Co2CsvArrowConverterStep(ForwardModelStepPlugin):
             name="CO2_CSV_ARROW_CONVERTER",
             command=[
                 shutil.which("co2_csv_arrow_converter"),
-                "--root-dir",
+                "--root_dir",
                 "<ROOT_DIR>",
-                "--realization-pattern",
-                "<REALIZATION_PATTERN>",
-                "--kept-columns",
-                "<KEPT_COLUMNS>",
-                "--force-arrow-overwrite",
-                "<FORCE_ARROW_OVERWRITE>",
-                "--force-csv-overwrite",
-                "<FORCE_CSV_OVERWRITE>",
+                "<OPTIONS>",
             ],
             default_mapping={
-                "<ROOT_DIR>": -1,
-                "<REALIZATION_PATTERN>": -1,
-                "<KEPT_COLUMNS>": -1,
-                "<FORCE_ARROW_OVERWRITE>": -1,
-                "<FORCE_CSV_OVERWRITE>": -1,
-            },
+                "<ROOT_DIR>": ".",
+                "<OPTIONS>": "",
+            }
         )
 
     @staticmethod
@@ -196,6 +186,7 @@ class Co2CsvArrowConverterStep(ForwardModelStepPlugin):
         return ForwardModelStepDocumentation(
             description=_DESC_CO2_CSV_ARROW_CONVERTER,
             category=_CATEGORY,
+            examples=_EXAMPLES_CO2_CSV_ARROW_CONVERTER,
         )
 
 
@@ -386,6 +377,23 @@ produced. See tests/yaml for examples of yaml files.
 
 
 _DESC_GRID3D_MIGRATION_TIME = "Generate migration time property maps."
+
+
+_EXAMPLES_CO2_CSV_ARROW_CONVERTER = """
+If running from the root directory of the project, the default parameters
+is probably what you want:
+
+.. code-block:: console
+
+  FORWARD_MODEL CO2_CSV_ARROW_CONVERTER()
+
+The root directory can be specified with the <ROOT_DIR> parameter, and more
+advanced options can be specified with the <OPTIONS> parameter. For example:
+
+.. code-block:: console
+
+  FORWARD_MODEL CO2_CSV_ARROW_CONVERTER(<ROOT_DIR>=/path/to/root, <OPTIONS>="--force_arrow_overwrite --realization_pattern=realization-*/iter-* --kept_columns=zone,plume_group")
+"""  # noqa: E501
 
 
 _EXAMPLES_GRID3D_AGGREGATE_MAP = """
