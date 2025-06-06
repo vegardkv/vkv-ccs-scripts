@@ -167,6 +167,27 @@ class Co2PlumeExtentStep(ForwardModelStepPlugin):
 
 class Co2CsvArrowConverterStep(ForwardModelStepPlugin):
     def __init__(self):
+        # This FORWARD_MODEL is slightly different from the others, as it
+        # does not provide individual keywords for every possible argument.
+        # Instead, it uses a single <OPTIONS> keyword that can be used to
+        # pass any number of command line options to the underlying script.
+        #
+        # One advantage of this is less maintenance, as the underlying
+        # script may change its command line options without requiring
+        # changes to this FORWARD_MODEL.
+        #
+        # Another advantage is that we don't need placeholder defaults
+        # (e.g. "-1") for every possible command line option, combined
+        # with a parser pre-processing step that replaces these with
+        # the actual defaults.
+        #
+        # The downside is that the user must know the command line options
+        # of the underlying script, and that the command line options
+        # are not documented in the FORWARD_MODEL documentation.
+        #
+        # Another downside is that this FORWARD_MODEL appears different
+        # from the others, which may be confusing to users.
+
         super().__init__(
             name="CO2_CSV_ARROW_CONVERTER",
             command=[
