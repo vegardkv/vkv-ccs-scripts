@@ -5,7 +5,7 @@
 import datetime
 from enum import Enum
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import pandas as pd
 import pyarrow as pa
@@ -85,7 +85,7 @@ def try_convert_containment_csv_to_arrow(
 
 def apply_to_realizations(
     root_dir: Path,
-    realization_pattern: str | None,
+    realization_pattern: Optional[str],
     kept_columns: List[str],
     overwrite_arrow: bool = False,
     overwrite_csv: bool = False,
