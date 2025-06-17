@@ -3,6 +3,7 @@ from typing import Any, Dict
 
 from ert import (
     ForwardModelStepDocumentation,
+    ForwardModelStepJSON,
     ForwardModelStepPlugin,
 )
 from ert import plugin as ert_plugin
@@ -201,6 +202,16 @@ class Co2CsvArrowConverterStep(ForwardModelStepPlugin):
                 "<OPTIONS>": "",
             },
         )
+
+    def validate_pre_realization_run(
+        self, fm_step_json: ForwardModelStepJSON
+    ) -> ForwardModelStepJSON:
+        # Remove any empty arguments from the argList. Default <OPTIONS> will be passed
+        # as an empty string, so we need to remove it to avoid passing "" as an argument,
+        # leading to an "unrecognized arguments" error. res2df handles this differently:
+        # https://github.com/equinor/res2df/blob/9d121ad4b76e6379c7546a25ff45da19eda1b6f2/src/res2df/res2csv.py#L215C1-L220C10
+        fm_step_json["argList"] = [a for a in fm_step_json["argList"] if a]
+        return fm_step_json
 
     @staticmethod
     def documentation() -> ForwardModelStepDocumentation:
