@@ -13,11 +13,9 @@ from ccs_scripts.co2_containment.co2_calculation import (
     Co2Data,
     Co2DataAtTimeStep,
     Scenario,
-    _fetch_properties,
-    _identify_gas_less_cells,
-    _is_subset,
 )
-from ccs_scripts.utils.utils import Timer
+from ccs_scripts.utils.timer import Timer
+from ccs_scripts.utils.utils import fetch_properties, identify_gas_less_cells, is_subset
 
 CO2_MASS_PNAME = "CO2Mass"
 
@@ -50,12 +48,12 @@ def _get_gasless(properties: Dict[str, Dict[str, List[np.ndarray]]]) -> np.ndarr
     Returns:
         np.ndarray
     """
-    if _is_subset(["SGAS", "AMFS"], list(properties.keys())):
-        gasless = _identify_gas_less_cells(properties["SGAS"], properties["AMFS"])
-    elif _is_subset(["SGAS", "AMFG"], list(properties.keys())):
-        gasless = _identify_gas_less_cells(properties["SGAS"], properties["AMFG"])
-    elif _is_subset(["SGAS", "XMF2"], list(properties.keys())):
-        gasless = _identify_gas_less_cells(properties["SGAS"], properties["XMF2"])
+    if is_subset(["SGAS", "AMFS"], list(properties.keys())):
+        gasless = identify_gas_less_cells(properties["SGAS"], properties["AMFS"])
+    elif is_subset(["SGAS", "AMFG"], list(properties.keys())):
+        gasless = identify_gas_less_cells(properties["SGAS"], properties["AMFG"])
+    elif is_subset(["SGAS", "XMF2"], list(properties.keys())):
+        gasless = identify_gas_less_cells(properties["SGAS"], properties["XMF2"])
     else:
         error_text = (
             "CO2 containment calculation failed. "
@@ -346,7 +344,7 @@ def _get_gas_idxs(
 
     """
     unrst = ResdataFile(unrst_file)
-    properties, _ = _fetch_properties(unrst, properties_to_extract)
+    properties, _ = fetch_properties(unrst, properties_to_extract)
     gasless = _get_gasless(properties)
     gas_idxs = np.array([index for index, value in enumerate(gasless) if not value])
     return gas_idxs
