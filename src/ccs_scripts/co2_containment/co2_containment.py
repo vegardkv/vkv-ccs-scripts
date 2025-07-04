@@ -33,10 +33,8 @@ from ccs_scripts.co2_containment.co2_calculation import (
     Co2Data,
     RegionInfo,
     ZoneInfo,
-    _fetch_properties,
     _set_calc_type_from_input_string,
     calculate_co2,
-    find_active_and_gasless_cells,
 )
 from ccs_scripts.co2_plume_tracking.co2_plume_tracking import (
     DEFAULT_THRESHOLD_DISSOLVED,
@@ -44,7 +42,7 @@ from ccs_scripts.co2_plume_tracking.co2_plume_tracking import (
     calculate_plume_groups,
 )
 from ccs_scripts.co2_plume_tracking.utils import InjectionWellData
-from ccs_scripts.utils.utils import Timer
+from ccs_scripts.utils.timer import Timer
 
 
 # pylint: disable=too-many-arguments
@@ -89,7 +87,6 @@ def calculate_out_of_bounds_co2(
     Returns:
         pd.DataFrame
     """
-    timer = Timer()
     co2_data = calculate_co2(
         grid_file,
         unrst_file,
@@ -113,9 +110,7 @@ def calculate_out_of_bounds_co2(
     if len(injection_wells) == 0:
         plume_groups = None
     else:
-        timer.start("find_plume_groups")
         plume_groups = _find_plume_groups(grid_file, unrst_file, injection_wells)
-        timer.stop("find_plume_groups")
 
     return calculate_from_co2_data(
         co2_data,
@@ -146,23 +141,13 @@ def _find_plume_groups(
     if dissolved_prop is None:
         plume_groups = None
     else:
-        plume_groups = calculate_plume_groups(
+        plume_groups, _ = calculate_plume_groups(
             attribute_key=dissolved_prop,
             threshold=0.1 * DEFAULT_THRESHOLD_DISSOLVED,
             unrst=unrst,
             grid=grid,
             inj_wells=injection_wells,
         )
-
-        # NBNB-AS: Plume tracking works on active grid cells, containment script on
-        #          gasless active cells. We do the conversion here, but could do a
-        #          conversion earlier (in plume tracking)
-        properties_to_extract = ["SGAS", dissolved_prop]
-        properties, _ = _fetch_properties(unrst, properties_to_extract)
-        active, gasless = find_active_and_gasless_cells(grid, properties, False)
-        global_active_idx = active[~gasless]
-        non_gasless = np.where(np.isin(active, global_active_idx))[0]
-        plume_groups = [list(np.array(x)[non_gasless]) for x in plume_groups]
     return plume_groups
 
 
@@ -746,7 +731,7 @@ def log_summary_of_results(
     total = extract_amount(df_subset, "total", "total", cell_volume)
     n = len(f"{total:.1f}")
 
-    col1 = 24
+    col1 = 30
     logging.info("\nSummary of results:")
     logging.info("===================")
     logging.info(f"{'Number of dates':<{col1}} : {len(dfs['date'].unique())}")
@@ -774,11 +759,19 @@ def log_summary_of_results(
                 f"{'End state trapped gas':<{col1}} : "
                 f"{value:{n}.1f}  ={percent:>5.1f} %"
             )
-        value = extract_amount(df_subset, "total", "dissolved")
+        value = extract_amount(df_subset, "total", "dissolved_water")
         percent = 100.0 * value / total if total > 0.0 else 0.0
         logging.info(
-            f"{'End state dissolved':<{col1}} : {value:{n}.1f}  ={percent:>5.1f} %"
+            f"{'End state dissolved in water':<{col1}} : "
+            f"{value:{n}.1f}  ={percent:>5.1f} %"
         )
+        if "dissolved_oil" in list(df_subset["phase"]):
+            value = extract_amount(df_subset, "total", "dissolved_oil")
+            percent = 100.0 * value / total if total > 0.0 else 0.0
+            logging.info(
+                f"{'End state dissolved in oil':<{col1}} : "
+                f"{value:{n}.1f}  ={percent:>5.1f} %"
+            )
     value = extract_amount(df_subset, "contained", "total", cell_volume)
     percent = 100.0 * value / total if total > 0.0 else 0.0
     logging.info(
@@ -1155,9 +1148,19 @@ def _init_timer():
     timer.code_parts = {
         "extract_source_data": "Extract source data",
         "calculate_co2": "Calculate CO2 per grid cell from source data",
-        "find_plume_groups": "Find plume groups (plume tracking)",
+        "plume_tracking": "Plume tracking",
+        "plume_tracking_represent_as_property": "Represent as property",
+        "plume_tracking_init_groups": "Initialize groups from previous step",
+        "plume_tracking_resolve_undetermined": "Resolve undetermined cells",
+        "plume_tracking_find_unique_groups": "Find unique groups",
+        "plume_tracking_logging": "Various logging",
+        "conversion_active_to_gasless_cells": "Convert active to gasless cells",
         "calculate_co2_containment": "Calculate CO2 containment",
+        "make_location_filters": "Make location filters for polygons",
+        "plume_group_mapping": "Map plume groups",
+        "sum_and_store": "Sum and store amount of CO2",
         "export_results": "Export results",
+        "logging": "Various logging",
     }
 
 

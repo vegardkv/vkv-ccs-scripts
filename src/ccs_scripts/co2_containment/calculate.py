@@ -13,6 +13,7 @@ from ccs_scripts.co2_containment.co2_calculation import (
     Co2DataAtTimeStep,
     Scenario,
 )
+from ccs_scripts.utils.timer import Timer
 
 
 @dataclass
@@ -86,16 +87,19 @@ def calculate_co2_containment(
     Returns:
         List[ContainedCo2]
     """
+    timer = Timer()
     logging.info(
         f"Calculate contained CO2 {calc_type.name.lower()} using input polygons"
     )
 
+    timer.start("make_location_filters", "calculate_co2_containment")
     # Dict with boolean arrays indicating location
     locations = _make_location_filters(
         co2_data,
         containment_polygon,
         hazardous_polygon,
     )
+    timer.stop("make_location_filters")
     _log_summary_of_grid_node_location(locations)
     phases = _lists_of_phases(calc_type, residual_trapping, co2_data.scenario)
 
@@ -111,23 +115,20 @@ def calculate_co2_containment(
         plume_names = set()
 
     containment = []
-    for zone, region, is_in_section in zone_region_info:
-        for location, is_in_location in locations.items():
-            for i, co2_at_timestep in enumerate(co2_data.data_list):
-                co2_amounts_for_each_phase = _lists_of_co2_for_each_phase(
-                    co2_at_timestep,
-                    calc_type,
-                    residual_trapping,
-                )
-
-                if plume_groups is not None:
-                    plume_group_info = _plume_group_mapping(
-                        plume_names, plume_groups[i]
-                    )
-                else:
-                    plume_group_info = {
-                        "all": np.ones(len(co2_data.x_coord), dtype=bool)
-                    }
+    for i, co2_at_timestep in enumerate(co2_data.data_list):
+        co2_amounts_for_each_phase = _lists_of_co2_for_each_phase(
+            co2_at_timestep,
+            calc_type,
+            residual_trapping,
+        )
+        if plume_groups is not None:
+            timer.start("plume_group_mapping", "calculate_co2_containment")
+            plume_group_info = _plume_group_mapping(plume_names, plume_groups[i])
+            timer.stop("plume_group_mapping")
+        else:
+            plume_group_info = {"all": np.ones(len(co2_data.x_coord), dtype=bool)}
+        for zone, region, is_in_section in zone_region_info:
+            for location, is_in_location in locations.items():
                 for plume_name, is_in_plume in plume_group_info.items():
                     for co2_amount, phase in zip(co2_amounts_for_each_phase, phases):
                         dtype = (
@@ -135,6 +136,7 @@ def calculate_co2_containment(
                             if calc_type == CalculationType.CELL_VOLUME
                             else np.float64
                         )
+                        timer.start("sum_and_store", "calculate_co2_containment")
                         amount = np.sum(
                             co2_amount[is_in_section & is_in_location & is_in_plume],
                             dtype=dtype,
@@ -150,6 +152,7 @@ def calculate_co2_containment(
                                 plume_name,
                             )
                         ]
+                        timer.stop("sum_and_store")
     logging.info(f"Done calculating contained CO2 {calc_type.name.lower()}")
     return containment
 
@@ -232,9 +235,11 @@ def _lists_of_phases(
     if calc_type == CalculationType.CELL_VOLUME:
         phases = ["undefined"]
     else:
-        phases = ["total", "dissolved"]
+        phases = ["total", "dissolved_water"]
         phases += ["trapped_gas", "free_gas"] if residual_trapping else ["gas"]
-        phases += ["oil"] if scenario == Scenario.DEPLETED_OIL_GAS_FIELD else []
+        phases += (
+            ["dissolved_oil"] if scenario == Scenario.DEPLETED_OIL_GAS_FIELD else []
+        )
     return phases
 
 

@@ -5,7 +5,7 @@
 import datetime
 from enum import Enum
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import pandas as pd
 import pyarrow as pa
@@ -90,11 +90,11 @@ def apply_to_realizations(
     overwrite_csv: bool = False,
 ) -> None:
     """
-    Apply the conversion functions to all realizations matching the
-    realization_pattern. The pattern should be a glob pattern relative to
-    the current directory. The function will create missing Arrow files
-    for CSV files and vice versa. The overwrite_arrow and overwrite_csv
-    flags control whether existing files should be overwritten.
+    The function will create missing Arrow files for CSV files and vice versa.
+    The overwrite_arrow and overwrite_csv flags control whether existing files
+    should be overwritten. realization_pattern can be provided to specify
+    a glob pattern for the realization directories. If "falsy", it defaults to
+    processing only the root_dir.
     """
     assert not overwrite_csv or not overwrite_arrow
     # Extract paths for CSV and Arrow files

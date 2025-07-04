@@ -21,7 +21,7 @@ from ccs_scripts.co2_containment.co2_calculation import (
     calculate_co2,
     source_data_,
 )
-from ccs_scripts.utils.utils import Timer
+from ccs_scripts.utils.timer import Timer
 
 
 def generate_co2_mass_maps(config_: RootConfig):
@@ -53,6 +53,7 @@ def generate_co2_mass_maps(config_: RootConfig):
         zone_info=zone_info,
         region_info=region_info,
         residual_trapping=co2_mass_settings.residual_trapping,
+        gas_molar_mass=co2_mass_settings.gas_molar_mass,
     )
 
     dates = config_.input.dates
