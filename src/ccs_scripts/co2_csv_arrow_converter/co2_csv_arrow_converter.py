@@ -5,7 +5,7 @@
 import datetime
 from enum import Enum
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 import pandas as pd
 import pyarrow as pa
@@ -107,12 +107,8 @@ def apply_to_realizations(
 
     conversions = 0
     # Try creating missing Arrow files for all realizations
-    conversions += try_convert_csv_to_arrow(
-        csv_path_1, arrow_path_1, overwrite_arrow
-    )
-    conversions += try_convert_csv_to_arrow(
-        csv_path_2, arrow_path_2, overwrite_arrow
-    )
+    conversions += try_convert_csv_to_arrow(csv_path_1, arrow_path_1, overwrite_arrow)
+    conversions += try_convert_csv_to_arrow(csv_path_2, arrow_path_2, overwrite_arrow)
     conversions += try_convert_containment_csv_to_arrow(
         csv_path_3, arrow_path_3, kept_columns, overwrite_arrow
     )
