@@ -85,7 +85,6 @@ def try_convert_containment_csv_to_arrow(
 
 def apply_to_realizations(
     root_dir: Path,
-    realization_pattern: str,
     kept_columns: List[str],
     overwrite_arrow: bool = False,
     overwrite_csv: bool = False,
@@ -98,33 +97,32 @@ def apply_to_realizations(
     flags control whether existing files should be overwritten.
     """
     assert not overwrite_csv or not overwrite_arrow
-    for realization_dir in root_dir.glob(realization_pattern):
-        # Extract paths for CSV and Arrow files
-        csv_path_1 = _get_csv_path(realization_dir, _FileType.PLUME_EXTENT)
-        csv_path_2 = _get_csv_path(realization_dir, _FileType.PLUME_AREA)
-        csv_path_3 = _get_csv_path(realization_dir, _FileType.CONTAINMENT)
-        arrow_path_1 = _get_arrow_path(realization_dir, _FileType.PLUME_EXTENT)
-        arrow_path_2 = _get_arrow_path(realization_dir, _FileType.PLUME_AREA)
-        arrow_path_3 = _get_arrow_path(realization_dir, _FileType.CONTAINMENT)
+    # Extract paths for CSV and Arrow files
+    csv_path_1 = _get_csv_path(root_dir, _FileType.PLUME_EXTENT)
+    csv_path_2 = _get_csv_path(root_dir, _FileType.PLUME_AREA)
+    csv_path_3 = _get_csv_path(root_dir, _FileType.CONTAINMENT)
+    arrow_path_1 = _get_arrow_path(root_dir, _FileType.PLUME_EXTENT)
+    arrow_path_2 = _get_arrow_path(root_dir, _FileType.PLUME_AREA)
+    arrow_path_3 = _get_arrow_path(root_dir, _FileType.CONTAINMENT)
 
-        conversions = 0
-        # Try creating missing Arrow files for all realizations
-        conversions += try_convert_csv_to_arrow(
-            csv_path_1, arrow_path_1, overwrite_arrow
-        )
-        conversions += try_convert_csv_to_arrow(
-            csv_path_2, arrow_path_2, overwrite_arrow
-        )
-        conversions += try_convert_containment_csv_to_arrow(
-            csv_path_3, arrow_path_3, kept_columns, overwrite_arrow
-        )
+    conversions = 0
+    # Try creating missing Arrow files for all realizations
+    conversions += try_convert_csv_to_arrow(
+        csv_path_1, arrow_path_1, overwrite_arrow
+    )
+    conversions += try_convert_csv_to_arrow(
+        csv_path_2, arrow_path_2, overwrite_arrow
+    )
+    conversions += try_convert_containment_csv_to_arrow(
+        csv_path_3, arrow_path_3, kept_columns, overwrite_arrow
+    )
 
-        # Try creating missing CSV files for all realizations
-        conversions += try_convert_arrow_to_csv(csv_path_1, arrow_path_1, overwrite_csv)
-        conversions += try_convert_arrow_to_csv(csv_path_2, arrow_path_2, overwrite_csv)
-        # No conversion for containment data from Arrow to CSV yet
+    # Try creating missing CSV files for all realizations
+    conversions += try_convert_arrow_to_csv(csv_path_1, arrow_path_1, overwrite_csv)
+    conversions += try_convert_arrow_to_csv(csv_path_2, arrow_path_2, overwrite_csv)
+    # No conversion for containment data from Arrow to CSV yet
 
-        print(f"Processed {realization_dir}: {conversions} conversions made.")
+    print(f"Processed {root_dir}: {conversions} conversions made.")
 
 
 class _FileType(Enum):
@@ -197,14 +195,8 @@ def main():
     parser.add_argument(
         "--root_dir",
         type=Path,
-        help="Root directory for the glob pattern",
+        help="Root directory for the conversions",
         default=Path(".").resolve(),
-    )
-    parser.add_argument(
-        "--realization_pattern",
-        type=str,
-        help="Glob pattern (relative to root_dir) for an FMU realization directory",
-        default="realization-*/iter-*",
     )
     parser.add_argument(
         "--kept_columns",
