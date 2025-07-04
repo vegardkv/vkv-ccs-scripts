@@ -219,7 +219,6 @@ def main():
     args = parser.parse_args()
     apply_to_realizations(
         args.root_dir,
-        args.realization_pattern,
         args.kept_columns.split(","),
         args.force_arrow_overwrite,
         args.force_csv_overwrite,
