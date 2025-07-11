@@ -5,7 +5,7 @@
 import datetime
 from enum import Enum
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import pandas as pd
 import pyarrow as pa
