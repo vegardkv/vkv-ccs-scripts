@@ -20,7 +20,6 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-import yaml
 from resdata.grid import Grid
 from resdata.resfile import ResdataFile
 
@@ -30,6 +29,12 @@ from ccs_scripts.co2_plume_tracking.utils import (
     InjectionWellData,
     assemble_plume_groups_into_dict,
     sort_well_names,
+)
+from ccs_scripts.utils.timer import Timer
+from ccs_scripts.utils.utils import (
+    fetch_properties,
+    find_active_and_gasless_cells,
+    read_yaml_file,
 )
 
 DEFAULT_THRESHOLD_GAS = 0.2
@@ -112,7 +117,7 @@ class Configuration:
         self.do_plume_tracking: bool = False  # Only available when using a config file
 
         if config_file != "":
-            input_dict = self.read_config_file(config_file)
+            input_dict = read_yaml_file(config_file)
             self.make_config_from_input_dict(input_dict, case)
         if injection_point_info != "":
             self.make_config_from_input_args(
@@ -125,16 +130,6 @@ class Configuration:
                 " specified in the input. Terminating script"
             )
             sys.exit(1)
-
-    @staticmethod
-    def read_config_file(config_file: str) -> Dict:
-        with open(config_file, "r", encoding="utf8") as stream:
-            try:
-                config = yaml.safe_load(stream)
-                return config
-            except yaml.YAMLError as exc:
-                logging.error(exc)
-                sys.exit(1)
 
     def make_config_from_input_dict(self, input_dict: Dict, case: str):
         if "do_plume_tracking" in input_dict:
@@ -607,41 +602,47 @@ def _log_distance_calculation_configurations(config: Configuration) -> None:
 
 def _calculate_grid_cell_distances(
     inj_wells: Optional[List[InjectionWellData]],
-    nactive: int,
+    n_co2: int,
     calculation_type: CalculationType,
     grid: Grid,
     config: Calculation,
-):
+    active_indices: List[int],
+) -> Dict[str, np.ndarray]:
+    timer = Timer()
+    timer.start("calculate_grid_cell_distances")
     dist = {}
     if calculation_type == CalculationType.PLUME_EXTENT:
         if inj_wells is None or len(inj_wells) == 0:
             # Also needed when no config file is used
             x0 = config.x
             y0 = config.y
-            dist["WELL"] = np.zeros(shape=(nactive,))
-            for i in range(nactive):
-                center = grid.get_xyz(active_index=i)
+            dist["WELL"] = np.zeros(shape=(n_co2,))
+            for i in range(n_co2):
+                center = grid.get_xyz(active_index=active_indices[i])
                 dist["WELL"][i] = np.sqrt((center[0] - x0) ** 2 + (center[1] - y0) ** 2)
         else:
             for well in inj_wells:
                 name = well.name
                 x0 = well.x
                 y0 = well.y
-                dist[name] = np.zeros(shape=(nactive,))
-                for i in range(nactive):
-                    center = grid.get_xyz(active_index=i)
+
+                dist[name] = np.zeros(shape=(n_co2,))
+                centers = [
+                    grid.get_xyz(active_index=act_ind) for act_ind in active_indices
+                ]
+                for i in range(n_co2):
                     dist[well.name][i] = np.sqrt(
-                        (center[0] - x0) ** 2 + (center[1] - y0) ** 2
+                        (centers[i][0] - x0) ** 2 + (centers[i][1] - y0) ** 2
                     )
     elif calculation_type == CalculationType.POINT:
-        dist["ALL"] = np.zeros(shape=(nactive,))
+        dist["ALL"] = np.zeros(shape=(n_co2,))
         x0 = config.x
         y0 = config.y
-        for i in range(nactive):
-            center = grid.get_xyz(active_index=i)
+        for i in range(n_co2):
+            center = grid.get_xyz(active_index=active_indices[i])
             dist["ALL"][i] = np.sqrt((center[0] - x0) ** 2 + (center[1] - y0) ** 2)
     elif calculation_type == CalculationType.LINE:
-        dist["ALL"] = np.zeros(shape=(nactive,))
+        dist["ALL"] = np.zeros(shape=(n_co2,))
         line_value = config.x
         ind = 0  # Use x-coordinate
         if config.direction in (LineDirection.NORTH, LineDirection.SOUTH):
@@ -652,8 +653,8 @@ def _calculate_grid_cell_distances(
         if config.direction in (LineDirection.WEST, LineDirection.SOUTH):
             factor = -1
 
-        for i in range(nactive):
-            center = grid.get_xyz(active_index=i)
+        for i in range(n_co2):
+            center = grid.get_xyz(active_index=active_indices[i])
             dist["ALL"][i] = factor * (line_value - center[ind])
         dist["ALL"][dist["ALL"] < 0] = 0.0
 
@@ -678,11 +679,11 @@ def _calculate_grid_cell_distances(
         )
     logging.info("")
 
+    timer.stop("calculate_grid_cell_distances")
     return dist
 
 
 def calculate_single_distances(
-    nactive: int,
     grid: Grid,
     unrst: ResdataFile,
     threshold_gas: float,
@@ -691,12 +692,38 @@ def calculate_single_distances(
     inj_wells: Optional[List[InjectionWellData]],
     plume_groups_gas: Optional[List[List[str]]],
     plume_groups_dissolved: Optional[List[List[str]]],
+    cell_map_active_to_co2: Optional[Dict[int, int]],
 ):
     calculation_type = config.type
 
+    if cell_map_active_to_co2 is None:
+        dissolved_prop = None
+        if "AMFG" in unrst:
+            dissolved_prop = "AMFG"
+        elif "XMF2" in unrst:
+            dissolved_prop = "XMF2"
+
+        props_to_extract = ["SGAS"]
+        if dissolved_prop is not None:
+            props_to_extract.append(dissolved_prop)
+        properties, _ = fetch_properties(unrst, props_to_extract)
+
+        active, gasless = find_active_and_gasless_cells(
+            grid, properties, False, dissolved_prop is None
+        )
+        global_active_idx = active[~gasless]
+        non_gasless = np.where(np.isin(active, global_active_idx))[0]
+
+        active_indices = [int(ind) for ind in non_gasless]
+        n_co2 = len(non_gasless)
+        cell_map_active_to_co2 = {non_gasless[i]: i for i in range(0, n_co2)}
+    else:
+        active_indices = [int(ind) for ind in cell_map_active_to_co2.keys()]
+    n_co2 = len(active_indices)
+
     # Calculate distance from point/line to center of all cells
     dist = _calculate_grid_cell_distances(
-        inj_wells, nactive, calculation_type, grid, config
+        inj_wells, n_co2, calculation_type, grid, config, active_indices
     )
 
     gas_results = _find_distances_per_time_step(
@@ -707,6 +734,7 @@ def calculate_single_distances(
         dist,
         inj_wells,
         plume_groups_gas,
+        cell_map_active_to_co2,
     )
 
     if "AMFG" in unrst:
@@ -718,6 +746,7 @@ def calculate_single_distances(
             dist,
             inj_wells,
             plume_groups_dissolved,
+            cell_map_active_to_co2,
         )
         dissolved_prop_key = "AMFG"
     elif "XMF2" in unrst:
@@ -729,6 +758,7 @@ def calculate_single_distances(
             dist,
             inj_wells,
             plume_groups_dissolved,
+            cell_map_active_to_co2,
         )
         dissolved_prop_key = "XMF2"
     else:
@@ -756,7 +786,7 @@ def calculate_distances(
     unrst = ResdataFile(f"{case}.UNRST")
 
     if do_plume_tracking and injection_wells is not None:
-        plume_groups_gas = calculate_plume_groups(
+        plume_groups_gas, cell_map_active_to_co2 = calculate_plume_groups(
             "SGAS",
             threshold_gas,
             unrst,
@@ -771,7 +801,7 @@ def calculate_distances(
         else:
             dissolved_prop_key = None
         if dissolved_prop_key is not None:
-            plume_groups_dissolved = calculate_plume_groups(
+            plume_groups_dissolved, _ = calculate_plume_groups(
                 dissolved_prop_key,
                 threshold_dissolved,
                 unrst,
@@ -783,6 +813,7 @@ def calculate_distances(
     else:
         plume_groups_gas = None
         plume_groups_dissolved = None
+        cell_map_active_to_co2 = None
 
     nactive = grid.get_num_active()
     logging.info(f"Number of active grid cells: {nactive}")
@@ -791,7 +822,6 @@ def calculate_distances(
     for i, single_config in enumerate(distance_calculations, 1):
         logging.info(f"\nCalculating distances for configuration number: {i}\n")
         (a, b, c) = calculate_single_distances(
-            nactive,
             grid,
             unrst,
             threshold_gas,
@@ -800,6 +830,7 @@ def calculate_distances(
             injection_wells,
             plume_groups_gas,
             plume_groups_dissolved,
+            cell_map_active_to_co2,
         )
         all_results.append((a, b, c))
         logging.info(f"Done calculating distances for configuration number: {i}\n")
@@ -814,10 +845,14 @@ def _find_distances_per_time_step(
     dist: Dict[str, np.ndarray],
     inj_wells: Optional[List[InjectionWellData]],
     plume_groups: Optional[List[List[str]]],
+    cell_map_active_to_co2: Dict[int, int],
 ) -> dict:
     """
     Find value of distance metric for each step
     """
+    timer = Timer()
+    timer.start("find_distances")
+
     do_plume_tracking = plume_groups is not None
     n_time_steps = len(unrst.report_steps)
     dist_per_group: Dict[str, Dict[str, np.ndarray]] = {}
@@ -836,6 +871,7 @@ def _find_distances_per_time_step(
             calculation_type,
             dist,
             plume_groups[i] if plume_groups is not None else None,
+            cell_map_active_to_co2,
             dist_per_group,
         )
         percent = (i + 1) / n_time_steps
@@ -862,6 +898,7 @@ def _find_distances_per_time_step(
     )
 
     logging.info(f"Done calculating plume extent for {attribute_key}.")
+    timer.stop("find_distances")
     return outputs
 
 
@@ -875,14 +912,10 @@ def _find_distances_at_time_step(
     calculation_type: CalculationType,
     dist: Dict[str, np.ndarray],
     plume_groups: Optional[List[str]],
+    cell_map_active_to_co2: Dict[int, int],
     # This argument will be updated:
     dist_per_group: Dict[str, Dict[str, np.ndarray]],
 ):
-    # NBNB-AS: Only needed if plume tracking is deactivated?
-    #          If not, we have already done this
-    data = unrst[attribute_key][i].numpy_view()
-    cells_with_co2 = np.where(data > threshold)[0]
-
     if calculation_type == CalculationType.PLUME_EXTENT:
         if do_plume_tracking and plume_groups is not None:
             pg_dict = assemble_plume_groups_into_dict(plume_groups)
@@ -903,14 +936,19 @@ def _find_distances_at_time_step(
                         indices_this_group
                     ].max()
         else:
+            data = unrst[attribute_key][i].numpy_view()
+            active_cells_with_co2 = np.where(data > threshold)[0]
+            co2_above_threshold_indices = [
+                cell_map_active_to_co2[int(i)] for i in active_cells_with_co2
+            ]
             if i == 0:
                 dist_per_group["ALL"] = {}
                 for well_name in dist.keys():
                     dist_per_group["ALL"][well_name] = np.zeros(shape=(n_time_steps,))
             for well_name in dist.keys():
-                if len(cells_with_co2) > 0:
+                if len(co2_above_threshold_indices) > 0:
                     dist_per_group["ALL"][well_name][i] = dist[well_name][
-                        cells_with_co2
+                        co2_above_threshold_indices
                     ].max()
                 else:
                     dist_per_group["ALL"][well_name][i] = 0.0  # NBNB-AS: Or np.nan
@@ -933,12 +971,19 @@ def _find_distances_at_time_step(
                     indices_this_group
                 ].min()
         else:
+            data = unrst[attribute_key][i].numpy_view()
+            active_cells_with_co2 = np.where(data > threshold)[0]
+            co2_above_threshold_indices = [
+                cell_map_active_to_co2[int(i)] for i in active_cells_with_co2
+            ]
             if i == 0:
                 dist_per_group["ALL"] = {}
                 for well_name in dist.keys():
                     dist_per_group["ALL"][well_name] = np.full(n_time_steps, np.nan)
-            if len(cells_with_co2) > 0:
-                dist_per_group["ALL"]["ALL"][i] = dist["ALL"][cells_with_co2].min()
+            if len(co2_above_threshold_indices) > 0:
+                dist_per_group["ALL"]["ALL"][i] = dist["ALL"][
+                    co2_above_threshold_indices
+                ].min()
             else:
                 dist_per_group["ALL"]["ALL"][i] = np.nan
 
@@ -1239,12 +1284,33 @@ def _find_input_line(injection_point_info: str) -> Tuple[str, float]:
     sys.exit(1)
 
 
+def _init_timer():
+    timer = Timer()
+    timer.reset_timings()
+    timer.code_parts = {
+        "plume_tracking": "Plume tracking",
+        "plume_tracking_represent_as_property": "Represent as property",
+        "plume_tracking_init_groups": "Initialize groups from previous step",
+        "plume_tracking_resolve_undetermined": "Resolve undetermined cells",
+        "plume_tracking_find_unique_groups": "Find unique groups",
+        "plume_tracking_logging": "Various logging",
+        "calculate_grid_cell_distances": "Precompute grid cells distances",
+        "find_distances": "Find distances",
+        "export_results": "Export results",
+        "logging": "Various logging",
+    }
+
+
 def main():
     """
     Calculate plume extent or distance to point/line using EGRID and
     UNRST-files. Calculated for SGAS and AMFG/XMF2. Output is distance per
     date written to a CSV file.
     """
+    _init_timer()
+    timer = Timer()
+    timer.start("total")
+
     args = _make_parser().parse_args()
     _replace_default_dummies_from_ert(args)
     args.column_name = (
@@ -1279,12 +1345,17 @@ def main():
     _log_results(df)
     _log_results_detailed(df)
 
+    timer.start("export_results")
     output_file = _find_output_file(args.output_csv, args.case)
     logging.info("\nExport results to CSV file")
     logging.info(f"    - File path: {output_file}")
     if os.path.isfile(output_file):
         logging.info("Output CSV file already exists => Will overwrite existing file")
     df.to_csv(output_file, index=False, na_rep="0.0")
+    timer.stop("export_results")
+
+    timer.stop("total")
+    timer.report()
 
     return 0
 

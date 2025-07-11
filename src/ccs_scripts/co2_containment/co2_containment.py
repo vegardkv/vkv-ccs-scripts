@@ -33,10 +33,8 @@ from ccs_scripts.co2_containment.co2_calculation import (
     Co2Data,
     RegionInfo,
     ZoneInfo,
-    _fetch_properties,
     _set_calc_type_from_input_string,
     calculate_co2,
-    find_active_and_gasless_cells,
 )
 from ccs_scripts.co2_plume_tracking.co2_plume_tracking import (
     DEFAULT_THRESHOLD_DISSOLVED,
@@ -44,7 +42,7 @@ from ccs_scripts.co2_plume_tracking.co2_plume_tracking import (
     calculate_plume_groups,
 )
 from ccs_scripts.co2_plume_tracking.utils import InjectionWellData
-from ccs_scripts.utils.utils import Timer
+from ccs_scripts.utils.timer import Timer
 
 
 # pylint: disable=too-many-arguments
@@ -56,9 +54,9 @@ def calculate_out_of_bounds_co2(
     zone_info: ZoneInfo,
     region_info: RegionInfo,
     residual_trapping: bool,
-    injection_wells: List[InjectionWellData],
-    file_containment_polygon: Optional[str] = None,
-    file_hazardous_polygon: Optional[str] = None,
+    inj_wells: List[InjectionWellData],
+    file_cont_polygon: Optional[str] = None,
+    file_haz_polygon: Optional[str] = None,
     gas_molar_mass: Optional[float] = None,
 ) -> pd.DataFrame:
     """
@@ -71,9 +69,9 @@ def calculate_out_of_bounds_co2(
         unrst_file (str): Path to UNRST-file
         init_file (str): Path to INIT-file
         calc_type_input (str): Choose mass / cell_volume / actual_volume
-        file_containment_polygon (str): Path to polygon defining the
+        file_cont_polygon (str): Path to polygon defining the
             containment area
-        file_hazardous_polygon (str): Path to polygon defining the
+        file_haz_polygon (str): Path to polygon defining the
             hazardous area
         zone_info (ZoneInfo): Containing path to zone-file,
             or zranges (if the zone-file is provided as a YAML-file
@@ -82,14 +80,13 @@ def calculate_out_of_bounds_co2(
         region_info (RegionInfo): Containing path to potential region-file,
             and list connecting region-numbers to names, if available
         residual_trapping (bool): Indicate if residual trapping should be calculated
-        injection_wells (List): Injection wells used for plume tracking
+        inj_wells (List): Injection wells used for plume tracking
         gas_molar_mass (float): Hydrocarbon gas molar mass. (Applies for cases with more
             than two components)
 
     Returns:
         pd.DataFrame
     """
-    timer = Timer()
     co2_data = calculate_co2(
         grid_file,
         unrst_file,
@@ -101,26 +98,18 @@ def calculate_out_of_bounds_co2(
         gas_molar_mass,
     )
 
-    if file_containment_polygon is not None:
-        containment_polygon = _read_polygon(file_containment_polygon)
-    else:
-        containment_polygon = None
-    if file_hazardous_polygon is not None:
-        hazardous_polygon = _read_polygon(file_hazardous_polygon)
-    else:
-        hazardous_polygon = None
+    cont_polygon = _read_polygon(file_cont_polygon) if file_cont_polygon else None
+    haz_polygon = _read_polygon(file_haz_polygon) if file_haz_polygon else None
 
-    if len(injection_wells) == 0:
+    if len(inj_wells) == 0:
         plume_groups = None
     else:
-        timer.start("find_plume_groups")
-        plume_groups = _find_plume_groups(grid_file, unrst_file, injection_wells)
-        timer.stop("find_plume_groups")
+        plume_groups = _find_plume_groups(grid_file, unrst_file, inj_wells)
 
     return calculate_from_co2_data(
         co2_data,
-        containment_polygon,
-        hazardous_polygon,
+        cont_polygon,
+        haz_polygon,
         calc_type_input,
         zone_info.int_to_zone,
         region_info.int_to_region,
@@ -146,30 +135,20 @@ def _find_plume_groups(
     if dissolved_prop is None:
         plume_groups = None
     else:
-        plume_groups = calculate_plume_groups(
+        plume_groups, _ = calculate_plume_groups(
             attribute_key=dissolved_prop,
             threshold=0.1 * DEFAULT_THRESHOLD_DISSOLVED,
             unrst=unrst,
             grid=grid,
             inj_wells=injection_wells,
         )
-
-        # NBNB-AS: Plume tracking works on active grid cells, containment script on
-        #          gasless active cells. We do the conversion here, but could do a
-        #          conversion earlier (in plume tracking)
-        properties_to_extract = ["SGAS", dissolved_prop]
-        properties, _ = _fetch_properties(unrst, properties_to_extract)
-        active, gasless = find_active_and_gasless_cells(grid, properties, False)
-        global_active_idx = active[~gasless]
-        non_gasless = np.where(np.isin(active, global_active_idx))[0]
-        plume_groups = [list(np.array(x)[non_gasless]) for x in plume_groups]
     return plume_groups
 
 
 def calculate_from_co2_data(
     co2_data: Co2Data,
-    containment_polygon: shapely.geometry.Polygon,
-    hazardous_polygon: Union[shapely.geometry.Polygon, None],
+    cont_polygon: shapely.geometry.Polygon,
+    haz_polygon: Union[shapely.geometry.Polygon, None],
     calc_type_input: str,
     int_to_zone: Optional[List[Optional[str]]],
     int_to_region: Optional[List[Optional[str]]],
@@ -177,14 +156,15 @@ def calculate_from_co2_data(
     plume_groups: Optional[List[List[str]]] = None,
 ) -> Union[pd.DataFrame, Dict[str, Dict[str, pd.DataFrame]]]:
     """
-    Use polygons to divide co2 mass or volume into different categories
-    (inside / outside / hazardous). Result is a data frame.
+    Use polygons (inside / outside / hazardous) and/or regions and/or zones
+    and/or plume groups to divide co2 mass or volume into different categories.
+    Result is a data frame.
 
     Args:
         co2_data (Co2Data): Mass/volume of CO2 at each time step
-        containment_polygon (shapely.geometry.Polygon): Polygon defining the
+        cont_polygon (shapely.geometry.Polygon): Polygon defining the
             containment area
-        hazardous_polygon (shapely.geometry.Polygon): Polygon defining the
+        haz_polygon (shapely.geometry.Polygon): Polygon defining the
             hazardous area
         calc_type_input (str): Choose mass / cell_volume / actual_volume
         int_to_zone (List): List of zone names
@@ -200,8 +180,8 @@ def calculate_from_co2_data(
     timer.start("calculate_co2_containment")
     contained_co2 = calculate_co2_containment(
         co2_data,
-        containment_polygon,
-        hazardous_polygon,
+        cont_polygon,
+        haz_polygon,
         int_to_zone,
         int_to_region,
         calc_type,
@@ -746,7 +726,7 @@ def log_summary_of_results(
     total = extract_amount(df_subset, "total", "total", cell_volume)
     n = len(f"{total:.1f}")
 
-    col1 = 24
+    col1 = 30
     logging.info("\nSummary of results:")
     logging.info("===================")
     logging.info(f"{'Number of dates':<{col1}} : {len(dfs['date'].unique())}")
@@ -774,11 +754,19 @@ def log_summary_of_results(
                 f"{'End state trapped gas':<{col1}} : "
                 f"{value:{n}.1f}  ={percent:>5.1f} %"
             )
-        value = extract_amount(df_subset, "total", "dissolved")
+        value = extract_amount(df_subset, "total", "dissolved_water")
         percent = 100.0 * value / total if total > 0.0 else 0.0
         logging.info(
-            f"{'End state dissolved':<{col1}} : {value:{n}.1f}  ={percent:>5.1f} %"
+            f"{'End state dissolved in water':<{col1}} : "
+            f"{value:{n}.1f}  ={percent:>5.1f} %"
         )
+        if "dissolved_oil" in list(df_subset["phase"]):
+            value = extract_amount(df_subset, "total", "dissolved_oil")
+            percent = 100.0 * value / total if total > 0.0 else 0.0
+            logging.info(
+                f"{'End state dissolved in oil':<{col1}} : "
+                f"{value:{n}.1f}  ={percent:>5.1f} %"
+            )
     value = extract_amount(df_subset, "contained", "total", cell_volume)
     percent = 100.0 * value / total if total > 0.0 else 0.0
     logging.info(
@@ -1155,9 +1143,19 @@ def _init_timer():
     timer.code_parts = {
         "extract_source_data": "Extract source data",
         "calculate_co2": "Calculate CO2 per grid cell from source data",
-        "find_plume_groups": "Find plume groups (plume tracking)",
+        "plume_tracking": "Plume tracking",
+        "plume_tracking_represent_as_property": "Represent as property",
+        "plume_tracking_init_groups": "Initialize groups from previous step",
+        "plume_tracking_resolve_undetermined": "Resolve undetermined cells",
+        "plume_tracking_find_unique_groups": "Find unique groups",
+        "plume_tracking_logging": "Various logging",
+        "conversion_active_to_gasless_cells": "Convert active to gasless cells",
         "calculate_co2_containment": "Calculate CO2 containment",
+        "make_location_filters": "Make location filters for polygons",
+        "plume_group_mapping": "Map plume groups",
+        "sum_and_store": "Sum and store amount of CO2",
         "export_results": "Export results",
+        "logging": "Various logging",
     }
 
 

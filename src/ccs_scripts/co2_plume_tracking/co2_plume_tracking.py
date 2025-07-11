@@ -20,15 +20,22 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-import yaml
 from resdata.grid import Grid
 from resdata.resfile import ResdataFile
 
 from ccs_scripts.co2_plume_tracking.utils import (
     InjectionWellData,
     PlumeGroups,
+    Status,
     assemble_plume_groups_into_dict,
     sort_well_names,
+)
+from ccs_scripts.utils.timer import Timer
+from ccs_scripts.utils.utils import (
+    fetch_properties,
+    find_active_and_gasless_cells,
+    read_yaml_file,
+    reduce_properties,
 )
 
 DEFAULT_THRESHOLD_GAS = 0.2
@@ -61,20 +68,8 @@ class Configuration:
     ):
         self.injection_wells: List[InjectionWellData] = []
 
-        input_dict = self.read_config_file(config_file)
+        input_dict = read_yaml_file(config_file)
         self.make_config_from_input_dict(input_dict)
-
-    @staticmethod
-    def read_config_file(
-        config_file: str,
-    ) -> Dict:  # NBNB-AS: Move to common utils-file?
-        with open(config_file, "r", encoding="utf8") as stream:
-            try:
-                config = yaml.safe_load(stream)
-                return config
-            except yaml.YAMLError as exc:
-                logging.error(exc)
-                sys.exit(1)
 
     def make_config_from_input_dict(self, input_dict: Dict):
         if "injection_wells" not in input_dict:
@@ -227,7 +222,7 @@ def calculate_all_plume_groups(
     threshold_dissolved: float,
     inj_wells: List[InjectionWellData],
 ) -> Tuple[List[List[str]], Optional[List[List[str]]], Optional[str]]:
-    pg_prop_gas = calculate_plume_groups(
+    pg_prop_gas, _ = calculate_plume_groups(
         "SGAS",
         threshold_gas,
         unrst,
@@ -235,7 +230,7 @@ def calculate_all_plume_groups(
         inj_wells,
     )
     if "AMFG" in unrst:
-        pg_prop_dissolved = calculate_plume_groups(
+        pg_prop_dissolved, _ = calculate_plume_groups(
             "AMFG",
             threshold_dissolved,
             unrst,
@@ -244,7 +239,7 @@ def calculate_all_plume_groups(
         )
         dissolved_prop_key = "AMFG"
     elif "XMF2" in unrst:
-        pg_prop_dissolved = calculate_plume_groups(
+        pg_prop_dissolved, _ = calculate_plume_groups(
             "XMF2",
             threshold_dissolved,
             unrst,
@@ -355,7 +350,7 @@ def calculate_plume_groups(
     unrst: ResdataFile,
     grid: Grid,
     inj_wells: List[InjectionWellData],
-) -> List[List[str]]:
+) -> Tuple[List[List[str]], Dict[int, int]]:
     """
     Calculates/tracks the plume groups for a single property.
     The result is a list over the number of time steps, where
@@ -363,10 +358,32 @@ def calculate_plume_groups(
     The string is the name of the plume group, for instance
     "well_A+well_B" (if well_A and well_B have merged).
     """
+    timer = Timer()
+    timer.start("plume_tracking")
+
     time_start = time.time()
     n_time_steps = len(unrst.report_steps)
     n_grid_cells_for_logging: Dict[str, List[int]] = {}
-    n_cells = len(unrst[attribute_key][0])
+
+    if "AMFG" in unrst:
+        dissolved_prop = "AMFG"
+    elif "XMF2" in unrst:
+        dissolved_prop = "XMF2"
+    props_to_extract = ["SGAS", dissolved_prop]
+    if attribute_key not in props_to_extract:
+        props_to_extract.append(attribute_key)
+    properties, dates = fetch_properties(unrst, props_to_extract)
+
+    active, gasless = find_active_and_gasless_cells(grid, properties, False)
+    global_active_idx = active[~gasless]
+    non_gasless = np.where(np.isin(active, global_active_idx))[0]
+    n_cells = len(non_gasless)
+
+    properties = reduce_properties(properties, ~gasless)
+    data = properties[attribute_key]
+
+    cell_map_gasless_to_active = {i: non_gasless[i] for i in range(0, n_cells)}
+    cell_map_active_to_gasless = {v: k for k, v in cell_map_gasless_to_active.items()}
 
     inj_wells_grid_indices: Dict[str, List[Tuple[int, int, Optional[int]]]] = {}
     _find_inj_wells_grid_indices(inj_wells_grid_indices, grid, inj_wells)
@@ -376,26 +393,29 @@ def calculate_plume_groups(
     logging.info(f"{0:>6.1f} %")
 
     # Plume group property
+    timer.start("plume_tracking_represent_as_property", "plume_tracking")
     pg_prop = [["" for _ in range(n_cells)] for _ in range(n_time_steps)]
+    timer.stop("plume_tracking_represent_as_property")
     prev_groups = PlumeGroups(n_cells)
-    for i in range(n_time_steps):
+    for i, date in enumerate(dates):
         groups = PlumeGroups(n_cells)
         _plume_groups_at_time_step(
-            unrst,
+            data[date],  # type: ignore[arg-type]
             grid,
-            attribute_key,
             i,
             threshold,
             prev_groups,
             inj_wells,
             inj_wells_grid_indices,
             n_time_steps,
+            cell_map_gasless_to_active,
+            cell_map_active_to_gasless,
             groups,
             n_grid_cells_for_logging,
         )
 
-        for j, cell in enumerate(groups.cells):
-            all_groups = cell.all_groups
+        timer.start("plume_tracking_represent_as_property", "plume_tracking")
+        for j, all_groups in enumerate(groups.all_groups):
             if all_groups:
                 group_string = "+".join(
                     [
@@ -408,45 +428,50 @@ def calculate_plume_groups(
                     ]
                 )
                 pg_prop[i][j] = group_string
+        timer.stop("plume_tracking_represent_as_property")
 
         prev_groups = groups.copy()
         percent = (i + 1) / n_time_steps
         logging.info(f"{percent * 100:>6.1f} %")
     logging.info("")
 
+    timer.start("plume_tracking_logging", "plume_tracking")
     _log_number_of_grid_cells(
         n_grid_cells_for_logging, unrst.report_dates, attribute_key, inj_wells
     )
+    timer.stop("plume_tracking_logging")
     logging.info(f"Done calculating plume tracking for {attribute_key}.")
     logging.info(
         f"Execution time {attribute_key}: {(time.time() - time_start):.1f} s\n"
     )
 
-    return pg_prop
+    timer.stop("plume_tracking")
+    return pg_prop, cell_map_active_to_gasless
 
 
 def _plume_groups_at_time_step(
-    unrst: ResdataFile,
+    data: np.ndarray,
     grid: Grid,
-    attribute_key: str,
     i: int,
     threshold: float,
     prev_groups: PlumeGroups,
     inj_wells: List[InjectionWellData],
     inj_wells_grid_indices: Dict[str, List[Tuple[int, int, Optional[int]]]],
     n_time_steps: int,
+    cell_map_gasless_to_active: dict[int, int],
+    cell_map_active_to_gasless: dict[int, int],
     # These arguments will be updated:
     groups: PlumeGroups,
     n_grid_cells_for_logging: Dict[str, List[int]],
 ):
-    # NBNB-AS: Here we are working on active grid cells,
-    #          instead of 'non-gasless' cells, like in containment-script
-    data = unrst[attribute_key][i].numpy_view()
+    timer = Timer()
+
     cells_with_co2 = np.where(data > threshold)[0]
 
     logging.debug("\nPrevious group:")
     prev_groups.debug_print()
 
+    timer.start("plume_tracking_init_groups", "plume_tracking")
     _initialize_groups_from_prev_step_and_inj_wells(
         cells_with_co2,
         prev_groups,
@@ -454,43 +479,51 @@ def _plume_groups_at_time_step(
         inj_wells,
         inj_wells_grid_indices,
         groups,
+        cell_map_gasless_to_active,
     )
+    timer.stop("plume_tracking_init_groups")
 
     logging.debug("\nCurrent group after first intialization:")
     groups.debug_print()
 
-    groups_to_merge = groups.resolve_undetermined_cells(grid)
+    timer.start("plume_tracking_resolve_undetermined", "plume_tracking")
+    groups_to_merge = groups.resolve_undetermined_cells(
+        grid, cell_map_gasless_to_active, cell_map_active_to_gasless
+    )
+    timer.stop("plume_tracking_resolve_undetermined")
     for full_group in groups_to_merge:
         new_group = [x for y in full_group for x in y]
         new_group.sort()
-        for cell in groups.cells:
-            if cell.has_co2():
+        for j in range(len(groups.status)):
+            if groups.status[j] == Status.HAS_CO2:
                 for g in full_group:
-                    if set(cell.all_groups) & set(g):
-                        cell.all_groups = new_group
+                    if set(groups.all_groups[j]) & set(g):
+                        groups.all_groups[j] = new_group.copy()
 
     logging.debug("\nCurrent group after resolving undetermined cells:")
     groups.debug_print()
 
+    timer.start("plume_tracking_find_unique_groups", "plume_tracking")
     unique_groups = groups.find_unique_groups()
+    timer.stop("plume_tracking_find_unique_groups")
     for g in unique_groups:
         if g == [-1]:
             if "undetermined" not in n_grid_cells_for_logging:
                 n_grid_cells_for_logging["undetermined"] = [0] * n_time_steps
             n_grid_cells_for_logging["undetermined"][i] = len(
-                [j for j in cells_with_co2 if groups.cells[j].all_groups == [-1]]
+                [j for j in cells_with_co2 if groups.all_groups[j] == [-1]]
             )
-            continue
-        indices_this_group = [
-            j for j in cells_with_co2 if groups.cells[j].all_groups == g
-        ]
+        else:
+            indices_this_group = [
+                j for j in cells_with_co2 if groups.all_groups[j] == g
+            ]
 
-        group_string = "+".join(
-            [str([x.name for x in inj_wells if x.number == y][0]) for y in g]
-        )
-        if group_string not in n_grid_cells_for_logging:
-            n_grid_cells_for_logging[group_string] = [0] * n_time_steps
-        n_grid_cells_for_logging[group_string][i] = len(indices_this_group)
+            group_string = "+".join(
+                [str([x.name for x in inj_wells if x.number == y][0]) for y in g]
+            )
+            if group_string not in n_grid_cells_for_logging:
+                n_grid_cells_for_logging[group_string] = [0] * n_time_steps
+            n_grid_cells_for_logging[group_string][i] = len(indices_this_group)
 
 
 def _initialize_groups_from_prev_step_and_inj_wells(
@@ -500,15 +533,18 @@ def _initialize_groups_from_prev_step_and_inj_wells(
     inj_wells: List[InjectionWellData],
     inj_wells_grid_indices: Dict[str, List[Tuple[int, int, Optional[int]]]],
     groups: PlumeGroups,
+    cell_map_gasless_to_active: dict[int, int],
 ):
     new_z_coords: Dict[str, List[float]] = {}
     for index in cells_with_co2:
-        if prev_groups.cells[index].has_co2():
-            groups.cells[index] = prev_groups.cells[index]
+        if prev_groups.status[index] == Status.HAS_CO2:
+            groups.status[index] = prev_groups.status[index]
+            groups.all_groups[index] = prev_groups.all_groups[index]
         else:
             # This grid cell did not have CO2 in the last time step
-            (i, j, k) = grid.get_ijk(active_index=index)
-            (x, y, z) = grid.get_xyz(active_index=index)
+            active_ind = cell_map_gasless_to_active[index]
+            (i, j, k) = grid.get_ijk(active_index=active_ind)
+            (x, y, z) = grid.get_xyz(active_index=active_ind)
             found = False
             for well in inj_wells:
                 if well.z is not None:
@@ -544,9 +580,9 @@ def _initialize_groups_from_prev_step_and_inj_wells(
                         well.number
                     )
                     if merged_group is None:
-                        groups.cells[index].set_cell_groups(new_groups=[well.number])
+                        groups.set_cell_groups(index, [well.number])
                     else:
-                        groups.cells[index].set_cell_groups(new_groups=merged_group)
+                        groups.set_cell_groups(index, merged_group)
                     if (
                         well.name not in new_z_coords
                         or z not in new_z_coords[well.name]
@@ -557,7 +593,7 @@ def _initialize_groups_from_prev_step_and_inj_wells(
                             new_z_coords[well.name].append(z)
                     break
             if not found:
-                groups.cells[index].set_undetermined()
+                groups.status[index] = Status.UNDETERMINED
     _update_inj_z_coordinates(inj_wells, new_z_coords)
     _find_inj_wells_grid_indices(
         inj_wells_grid_indices, grid, inj_wells
@@ -596,13 +632,6 @@ def _log_results(
 
     for col in df.drop("date", axis=1).columns:
         logging.info(f"End state {col:<{col_width}} : {dfs[col].iloc[-1]:>11.1f}")
-
-
-def _find_dates(all_results: List[Tuple[Dict, Optional[Dict], Optional[str]]]):
-    one_dict = all_results[0][0][next(iter(all_results[0][0]))]
-    one_array = one_dict[next(iter(one_dict))]
-    dates = [[date] for (date, _) in one_array]
-    return dates
 
 
 def _find_output_file(output: str, case: str):

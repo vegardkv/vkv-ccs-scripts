@@ -95,8 +95,8 @@ def _calc_and_compare(poly, masses, poly_hazardous=None):
     totals = {m.date: np.sum(m.total_mass()) for m in masses.data_list}
     contained = calculate_from_co2_data(
         co2_data=masses,
-        containment_polygon=poly,
-        hazardous_polygon=poly_hazardous,
+        cont_polygon=poly,
+        haz_polygon=poly_hazardous,
         calc_type_input="mass",
         int_to_zone=zone_info.int_to_zone,
         int_to_region=region_info.int_to_region,
@@ -132,14 +132,14 @@ def test_single_poly_co2_containment():
     assert extract_amount(
         table,
         "contained",
-        "dissolved",
+        "dissolved_water",
         # ) == pytest.approx(0.1727292176064847)
     ) == pytest.approx(0.193662335166215)
     assert extract_amount(table, "hazardous", "gas") == pytest.approx(0.0)
     assert extract_amount(
         table,
         "hazardous",
-        "dissolved",
+        "dissolved_water",
     ) == pytest.approx(0.0)
 
 
@@ -179,13 +179,13 @@ def test_multi_poly_co2_containment():
     assert extract_amount(
         table,
         "contained",
-        "dissolved",
+        "dissolved_water",
     ) == pytest.approx(0.314587815245215)
     assert extract_amount(table, "hazardous", "gas") == pytest.approx(0.0)
     assert extract_amount(
         table,
         "hazardous",
-        "dissolved",
+        "dissolved_water",
     ) == pytest.approx(0.0)
 
 
@@ -219,7 +219,7 @@ def test_hazardous_poly_co2_containment():
     assert extract_amount(
         table,
         "contained",
-        "dissolved",
+        "dissolved_water",
     ) == pytest.approx(0.193662335166215)
     assert extract_amount(
         table,
@@ -229,7 +229,7 @@ def test_hazardous_poly_co2_containment():
     assert extract_amount(
         table,
         "hazardous",
-        "dissolved",
+        "dissolved_water",
     ) == pytest.approx(0.027464813694839)
 
 
@@ -287,15 +287,15 @@ def test_reek_grid():
     masses = _calculate_co2_data_from_source_data(source_data, CalculationType.MASS)
     table = calculate_from_co2_data(
         co2_data=masses,
-        containment_polygon=reek_poly,
-        hazardous_polygon=reek_poly_hazardous,
+        cont_polygon=reek_poly,
+        haz_polygon=reek_poly_hazardous,
         calc_type_input="mass",
         int_to_zone=zone_info.int_to_zone,
         int_to_region=region_info.int_to_region,
     )
     sort_and_replace_nones(table)
     cs = ["total"] * 3 + ["contained"] + ["hazardous"] * 2
-    ps = ["total", "gas", "dissolved", "gas", "total", "gas"]
+    ps = ["total", "gas", "dissolved_water", "gas", "total", "gas"]
     amounts = [
         696.17120388324,
         7.650233009712884,
@@ -313,8 +313,8 @@ def test_reek_grid():
     )
     table2 = calculate_from_co2_data(
         co2_data=volumes,
-        containment_polygon=reek_poly,
-        hazardous_polygon=reek_poly_hazardous,
+        cont_polygon=reek_poly,
+        haz_polygon=reek_poly_hazardous,
         calc_type_input="actual_volume",
         int_to_zone=zone_info.int_to_zone,
         int_to_region=region_info.int_to_region,
@@ -353,8 +353,8 @@ def test_reek_grid():
     )
     table3 = calculate_from_co2_data(
         co2_data=masses_with_trapping,
-        containment_polygon=reek_poly,
-        hazardous_polygon=reek_poly_hazardous,
+        cont_polygon=reek_poly,
+        haz_polygon=reek_poly_hazardous,
         calc_type_input="mass",
         int_to_zone=zone_info.int_to_zone,
         int_to_region=region_info.int_to_region,
@@ -363,7 +363,7 @@ def test_reek_grid():
     sort_and_replace_nones(table3)
     cs3 = ["total"] * 4 + ["contained"] * 2 + ["hazardous"] * 3
     gas_part = ["trapped_gas", "free_gas"]
-    ps3 = ["total"] + gas_part + ["dissolved"] + gas_part + ["total"] + gas_part
+    ps3 = ["total"] + gas_part + ["dissolved_water"] + gas_part + ["total"] + gas_part
     amounts3 = [
         696.17120388324,
         4.59013980582773,
@@ -383,8 +383,8 @@ def test_reek_grid():
     )
     table4 = calculate_from_co2_data(
         co2_data=volumes_with_trapping,
-        containment_polygon=reek_poly,
-        hazardous_polygon=reek_poly_hazardous,
+        cont_polygon=reek_poly,
+        haz_polygon=reek_poly_hazardous,
         calc_type_input="actual_volume",
         int_to_zone=zone_info.int_to_zone,
         int_to_region=region_info.int_to_region,
@@ -393,7 +393,7 @@ def test_reek_grid():
     sort_and_replace_nones(table4)
     cs4 = ["total"] * 4 + ["contained"] * 2 + ["hazardous"] * 3
     gas_part = ["trapped_gas", "free_gas"]
-    ps4 = ["total"] + gas_part + ["dissolved"] + gas_part + ["total"] + gas_part
+    ps4 = ["total"] + gas_part + ["dissolved_water"] + gas_part + ["total"] + gas_part
     amounts4 = [
         1018.524203883313,
         198.0019398057147,
