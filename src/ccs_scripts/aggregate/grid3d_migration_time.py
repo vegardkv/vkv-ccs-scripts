@@ -209,7 +209,7 @@ def main(arguments=None):
             "Migration time maps are not supported for "
             "any of the properties provided: "
         )
-        error_text += f"{', '.join(p_spec.name)}"
+        error_text += f"{', '.join([x.name for x in config_.input.properties])}"
         raise ValueError(format_error(error_text))
     config_.input.properties = p_spec
     for prop in config_.input.properties:
