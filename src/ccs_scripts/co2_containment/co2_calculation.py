@@ -249,10 +249,11 @@ def _n_components(active_props: List):
     max_ymf_suffix = max(ymf_suffixes)
 
     if max_xmf_suffix != max_ymf_suffix:
-        raise ValueError(
+        error_text = (
             "Error: Number of components with XMF property differ from "
             "the number of components with YMF"
         )
+        raise ValueError(format_error(error_text))
     return max_xmf_suffix
 
 
@@ -300,7 +301,7 @@ def _extract_source_data(
         init = ResdataFile(init_file)
     except Exception:
         init = None
-        logging.info("No INIT-file loaded")
+        logging.info(format_warning("No INIT-file loaded"))
     properties, dates = fetch_properties(unrst, props_to_extract)
 
     active, gasless = find_active_and_gasless_cells(grid, properties, True)
@@ -497,7 +498,9 @@ def _process_regions(
                 logging.info("Region information successfully read from INIT-file")
                 region = region[~gasless]
             except KeyError:
-                logging.info("Region information not found in INIT-file.")
+                logging.info(
+                    format_warning("Region information not found in INIT-file.")
+                )
                 region = None
                 region_info.int_to_region = None
     return region
