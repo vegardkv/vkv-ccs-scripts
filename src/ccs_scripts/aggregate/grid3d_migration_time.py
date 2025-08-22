@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 import logging
-import os
+import shutil
 import sys
 import tempfile
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 import numpy as np
 import xtgeo
@@ -135,6 +135,7 @@ def calculate_migration_time_property(
 def migration_time_property_to_map(
     config_: RootConfig,
     prop: xtgeo.GridProperty,
+    temp_path: str,
 ):
     """
     Aggregates and writes a migration time property to file using `grid3d_aggregate_map`
@@ -145,12 +146,9 @@ def migration_time_property_to_map(
         "\nStart aggregating time migration property from "
         "temporary 3D grid file to 2D map"
     )
-    temp_file, temp_path = tempfile.mkstemp()
-    os.close(temp_file)
     config_.input.properties = [_config.Property(temp_path, None, 0)]
     prop.to_file(temp_path)
     grid3d_aggregate_map.generate_from_config(config_)
-    os.unlink(temp_path)
 
 
 def _init_timer():
@@ -206,15 +204,22 @@ def main(arguments=None):
         error_text += f"{', '.join(p_spec.name)}"
         raise ValueError(error_text)
     config_.input.properties = p_spec
-    for prop in config_.input.properties:
-        t_prop = calculate_migration_time_property(
-            prop.source,
-            prop.name,
-            prop.lower_threshold,
-            config_.input.grid,
-            config_.input.dates,
-        )
-        migration_time_property_to_map(config_, t_prop)
+    temp_dir = tempfile.mkdtemp()
+    logging.info(f"\nMaking temporary directory for 3D grids: {temp_dir}")
+    try:
+        for prop in config_.input.properties:
+            t_prop = calculate_migration_time_property(
+                prop.source,
+                prop.name,
+                prop.lower_threshold,
+                config_.input.grid,
+                config_.input.dates,
+            )
+            temp_path = temp_dir + "/" + prop.name
+            migration_time_property_to_map(config_, t_prop, temp_path)
+    finally:
+        logging.info(f"\nDeleting temporary directory for 3D grids: {temp_dir}")
+        shutil.rmtree(temp_dir)
 
     timer.stop("total")
     timer.report()
