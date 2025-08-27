@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import logging
+import os
 import shutil
 import sys
 import tempfile
@@ -218,7 +219,7 @@ def main(arguments=None):
                 config_.input.grid,
                 config_.input.dates,
             )
-            temp_path = temp_dir + "/" + prop.name
+            temp_path = os.path.join(temp_dir, prop.name)
             migration_time_property_to_map(config_, t_prop, temp_path)
     finally:
         logging.info(f"\nDeleting temporary directory for 3D grids: {temp_dir}")
