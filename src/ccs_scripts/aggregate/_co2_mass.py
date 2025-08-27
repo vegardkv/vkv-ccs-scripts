@@ -1,4 +1,5 @@
 import copy
+import os
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple, TypedDict, Union
 
@@ -398,8 +399,12 @@ def _convert_to_grid(
         mass_array[gas_idxs] = mass
         prop_grid_output: PropertyGridOutput = {
             "data": mass_array,
-            "unrst_path": grid_out_dir + "/" + str(MapName[name].value) + ".UNRST",
-            "egrid_path": grid_out_dir + "/" + str(MapName[name].value) + ".EGRID",
+            "unrst_path": os.path.join(
+                grid_out_dir, str(MapName[name].value) + ".UNRST"
+            ),
+            "egrid_path": os.path.join(
+                grid_out_dir, str(MapName[name].value) + ".EGRID"
+            ),
         }
         mass_grid_output[name] = prop_grid_output
     return mass_grid_output

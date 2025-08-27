@@ -1,9 +1,10 @@
 #!/usr/bin/env python
 import logging
 import os
+import shutil
 import sys
 import tempfile
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 import numpy as np
 import xtgeo
@@ -84,19 +85,19 @@ def _check_threshold(
     return lower_threshold
 
 
-def _log_t_prop(t_prop: Dict[str, xtgeo.GridProperty]):
+def _log_t_prop(t_prop: xtgeo.GridProperty, prop_name: str):
     col1 = 20
     col2 = 8
-    for k, v in t_prop.items():
-        n_finite = np.sum(np.isfinite(v.values))
-        logging.info(f"\nSummary of time migration 3D grid property {k}:")
-        logging.info(f"{'  - Minimum':<{col1}} : {v.values.min():>{col2}.1f}")
-        logging.info(f"{'  - Mean':<{col1}} : {v.values.mean():>{col2}.1f}")
-        logging.info(f"{'  - Maximum':<{col1}} : {v.values.max():>{col2}.1f}")
-        logging.info(
-            f"{'  - # cells with CO2':<{col1}} : "
-            f"{n_finite:>{col2}} ({100.0 * n_finite / v.values.size:.1f}%)"
-        )
+
+    n_finite = np.sum(np.isfinite(t_prop.values))
+    logging.info(f"\nSummary of time migration 3D grid property {prop_name}:")
+    logging.info(f"{'  - Minimum':<{col1}} : {t_prop.values.min():>{col2}.1f}")
+    logging.info(f"{'  - Mean':<{col1}} : {t_prop.values.mean():>{col2}.1f}")
+    logging.info(f"{'  - Maximum':<{col1}} : {t_prop.values.max():>{col2}.1f}")
+    logging.info(
+        f"{'  - # cells with CO2':<{col1}} : "
+        f"{n_finite:>{col2}} ({100.0 * n_finite / t_prop.values.size:.1f}%)"
+    )
 
 
 def calculate_migration_time_property(
@@ -105,7 +106,7 @@ def calculate_migration_time_property(
     lower_threshold: float,
     grid_file: Optional[str],
     dates: List[str],
-) -> Dict[str, xtgeo.GridProperty]:
+) -> xtgeo.GridProperty:
     """
     Calculates a 3D migration time property from the provided grid and grid property
     files
@@ -129,14 +130,15 @@ def calculate_migration_time_property(
         properties, lower_threshold
     )
     timer.stop("generate_migration_time_property")
-    _log_t_prop(t_prop)
+    _log_t_prop(t_prop, property_name)
 
     return t_prop
 
 
 def migration_time_property_to_map(
     config_: RootConfig,
-    t_prop: Dict[str, xtgeo.GridProperty],
+    prop: xtgeo.GridProperty,
+    temp_path: str,
 ):
     """
     Aggregates and writes a migration time property to file using `grid3d_aggregate_map`
@@ -147,13 +149,9 @@ def migration_time_property_to_map(
         "\nStart aggregating time migration property from "
         "temporary 3D grid file to 2D map"
     )
-    for prop in t_prop.values():
-        temp_file, temp_path = tempfile.mkstemp()
-        os.close(temp_file)
-        config_.input.properties = [_config.Property(temp_path, None, 0)]
-        prop.to_file(temp_path)
+    config_.input.properties = [_config.Property(temp_path, None, 0)]
+    prop.to_file(temp_path)
     grid3d_aggregate_map.generate_from_config(config_)
-    os.unlink(temp_path)
 
 
 def _init_timer():
@@ -210,15 +208,22 @@ def main(arguments=None):
         error_text += f"{', '.join([x.name for x in config_.input.properties])}"
         raise ValueError(format_error(error_text))
     config_.input.properties = p_spec
-    for prop in config_.input.properties:
-        t_prop = calculate_migration_time_property(
-            prop.source,
-            prop.name,
-            prop.lower_threshold,
-            config_.input.grid,
-            config_.input.dates,
-        )
-        migration_time_property_to_map(config_, t_prop)
+    temp_dir = tempfile.mkdtemp()
+    logging.info(f"\nMaking temporary directory for 3D grids: {temp_dir}")
+    try:
+        for prop in config_.input.properties:
+            t_prop = calculate_migration_time_property(
+                prop.source,
+                prop.name,
+                prop.lower_threshold,
+                config_.input.grid,
+                config_.input.dates,
+            )
+            temp_path = os.path.join(temp_dir, prop.name)
+            migration_time_property_to_map(config_, t_prop, temp_path)
+    finally:
+        logging.info(f"\nDeleting temporary directory for 3D grids: {temp_dir}")
+        shutil.rmtree(temp_dir)
 
     timer.stop("total")
     timer.report()
