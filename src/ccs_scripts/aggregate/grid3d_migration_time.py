@@ -1,9 +1,10 @@
 #!/usr/bin/env python
 import logging
 import os
+import shutil
 import sys
 import tempfile
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 import numpy as np
 import xtgeo
@@ -19,6 +20,7 @@ from ccs_scripts.aggregate._config import DEFAULT_LOWER_THRESHOLD, RootConfig
 from ccs_scripts.aggregate._utils import log_input_configuration
 from ccs_scripts.aggregate.grid3d_aggregate_map import _distribute_config_property
 from ccs_scripts.utils.timer import Timer
+from ccs_scripts.utils.utils import format_error, format_warning
 
 _XTG = XTGeoDialog()
 
@@ -44,10 +46,11 @@ MIGRATION_TIME_PROPERTIES = [
 def _check_config(config_: RootConfig) -> None:
     config_.input.properties = _distribute_config_property(config_.input.properties)
     if config_.computesettings.indicator_map:
-        logging.warning(
-            "\nWARNING: Indicator maps cannot be calculated for CO2 mass maps. "
+        warning_str = (
+            "\nWARNING: Indicator maps cannot be calculated for migration time maps. "
             "Changing 'indicator_map' to 'no'."
         )
+        logging.warning(format_warning(warning_str))
         config_.computesettings.indicator_map = False
     config_.computesettings.aggregation = _config.AggregationMethod.MIN
     config_.output.aggregation_tag = False
@@ -69,7 +72,7 @@ def _check_threshold(
             warning_str += f"\n            - Specified value: {lower_threshold:>8}"
             lower_threshold = DEFAULT_LOWER_THRESHOLD
             warning_str += f"\n            - Changed to     : {lower_threshold:>8}"
-            logging.warning(warning_str)
+            logging.warning(format_warning(warning_str))
     else:
         if lower_threshold > max_value_props:
             warning_str = "\nWARNING: Specified lower threshold is "
@@ -78,23 +81,23 @@ def _check_threshold(
             warning_str += (
                 f"\n         - Maximum property value: {max_value_props:>8.4f}"
             )
-            logging.warning(warning_str)
+            logging.warning(format_warning(warning_str))
     return lower_threshold
 
 
-def _log_t_prop(t_prop: dict[str, xtgeo.GridProperty]):
+def _log_t_prop(t_prop: xtgeo.GridProperty, prop_name: str):
     col1 = 20
     col2 = 8
-    for k, v in t_prop.items():
-        n_finite = np.sum(np.isfinite(v.values))
-        logging.info(f"\nSummary of time migration 3D grid property {k}:")
-        logging.info(f"{'  - Minimum':<{col1}} : {v.values.min():>{col2}.1f}")
-        logging.info(f"{'  - Mean':<{col1}} : {v.values.mean():>{col2}.1f}")
-        logging.info(f"{'  - Maximum':<{col1}} : {v.values.max():>{col2}.1f}")
-        logging.info(
-            f"{'  - # cells with CO2':<{col1}} : "
-            f"{n_finite:>{col2}} ({100.0 * n_finite / v.values.size:.1f}%)"
-        )
+
+    n_finite = np.sum(np.isfinite(t_prop.values))
+    logging.info(f"\nSummary of time migration 3D grid property {prop_name}:")
+    logging.info(f"{'  - Minimum':<{col1}} : {t_prop.values.min():>{col2}.1f}")
+    logging.info(f"{'  - Mean':<{col1}} : {t_prop.values.mean():>{col2}.1f}")
+    logging.info(f"{'  - Maximum':<{col1}} : {t_prop.values.max():>{col2}.1f}")
+    logging.info(
+        f"{'  - # cells with CO2':<{col1}} : "
+        f"{n_finite:>{col2}} ({100.0 * n_finite / t_prop.values.size:.1f}%)"
+    )
 
 
 def calculate_migration_time_property(
@@ -103,7 +106,7 @@ def calculate_migration_time_property(
     lower_threshold: float,
     grid_file: Optional[str],
     dates: List[str],
-) -> dict[str, xtgeo.GridProperty]:
+) -> xtgeo.GridProperty:
     """
     Calculates a 3D migration time property from the provided grid and grid property
     files
@@ -127,14 +130,15 @@ def calculate_migration_time_property(
         properties, lower_threshold
     )
     timer.stop("generate_migration_time_property")
-    _log_t_prop(t_prop)
+    _log_t_prop(t_prop, property_name)
 
     return t_prop
 
 
 def migration_time_property_to_map(
     config_: RootConfig,
-    t_prop: Dict[str, xtgeo.GridProperty],
+    prop: xtgeo.GridProperty,
+    temp_path: str,
 ):
     """
     Aggregates and writes a migration time property to file using `grid3d_aggregate_map`
@@ -145,15 +149,9 @@ def migration_time_property_to_map(
         "\nStart aggregating time migration property from "
         "temporary 3D grid file to 2D map"
     )
-    for prop in t_prop.values():
-        temp_file, temp_path = tempfile.mkstemp()
-        os.close(temp_file)
-        config_.input.properties = [
-            _config.Property(temp_path, None)
-        ]  # NBNB-AS: Input threshold?
-        prop.to_file(temp_path)
+    config_.input.properties = [_config.Property(temp_path, None, 0)]
+    prop.to_file(temp_path)
     grid3d_aggregate_map.generate_from_config(config_)
-    os.unlink(temp_path)
 
 
 def _init_timer():
@@ -182,9 +180,9 @@ def main(arguments=None):
     timer = Timer()
     timer.start("total")
 
-    config_ = _parser.process_arguments(arguments)
+    config_ = _parser.process_arguments(arguments, calc_type="migration_time")
     _check_config(config_)
-    log_input_configuration(config_, calc_type="time_migration")
+    log_input_configuration(config_, calc_type="migration_time")
     p_spec = []
     if any(x.name in MIGRATION_TIME_PROPERTIES for x in config_.input.properties):
         removed_props = [
@@ -196,28 +194,36 @@ def main(arguments=None):
             [x for x in config_.input.properties if x.name in MIGRATION_TIME_PROPERTIES]
         )
         if len(removed_props) > 0:
-            logging.warning(
-                "\nWARNING: Time migration maps are "
+            warning_str = (
+                "\nWARNING: Migration time maps are "
                 "not supported for these properties: ",
                 ", ".join(str(x) for x in removed_props),
             )
+            logging.warning(format_warning(warning_str))
     else:
         error_text = (
-            "Time migration maps are not supported for "
+            "Migration time maps are not supported for "
             "any of the properties provided: "
         )
-        error_text += f"{', '.join(p_spec.name)}"
-        raise ValueError(error_text)
+        error_text += f"{', '.join([x.name for x in config_.input.properties])}"
+        raise ValueError(format_error(error_text))
     config_.input.properties = p_spec
-    for prop in config_.input.properties:
-        t_prop = calculate_migration_time_property(
-            prop.source,
-            prop.name,
-            prop.lower_threshold,
-            config_.input.grid,
-            config_.input.dates,
-        )
-        migration_time_property_to_map(config_, t_prop)
+    temp_dir = tempfile.mkdtemp()
+    logging.info(f"\nMaking temporary directory for 3D grids: {temp_dir}")
+    try:
+        for prop in config_.input.properties:
+            t_prop = calculate_migration_time_property(
+                prop.source,
+                prop.name,
+                prop.lower_threshold,
+                config_.input.grid,
+                config_.input.dates,
+            )
+            temp_path = os.path.join(temp_dir, prop.name)
+            migration_time_property_to_map(config_, t_prop, temp_path)
+    finally:
+        logging.info(f"\nDeleting temporary directory for 3D grids: {temp_dir}")
+        shutil.rmtree(temp_dir)
 
     timer.stop("total")
     timer.report()

@@ -13,6 +13,7 @@ import yaml
 
 from ccs_scripts.aggregate._config import (
     DEFAULT_LOWER_THRESHOLD,
+    DEFAULT_LOWER_THRESHOLD_DISSOLVED,
     AggregationMethod,
     CO2MassSettings,
     ComputeSettings,
@@ -25,6 +26,11 @@ from ccs_scripts.aggregate._config import (
     ZProperty,
 )
 from ccs_scripts.co2_containment.co2_containment import str_to_bool
+from ccs_scripts.utils.utils import format_error, format_warning
+
+# Temp suppress these warnings. Can remove if input data or xtgeo behaviour changes
+warnings.filterwarnings("ignore", "EGrid file given with numres < 1", UserWarning)
+warnings.filterwarnings("ignore", "Unknown simulator code -1", UserWarning)
 
 # Temp suppress these warnings. Can remove if input data or xtgeo behaviour changes
 warnings.filterwarnings("ignore", "EGrid file given with numres < 1", UserWarning)
@@ -115,7 +121,7 @@ def _replace_default_dummies_from_ert(args):
         args.gas_molar_mass = None
 
 
-def process_arguments(arguments) -> RootConfig:
+def process_arguments(arguments, calc_type: Optional[str] = None) -> RootConfig:
     """
     Interprets and parses the provided arguments to an internal representation of input
     in the `RootConfig` class
@@ -142,6 +148,7 @@ def process_arguments(arguments) -> RootConfig:
         parsed_args.gridfolder,
         parsed_args.gas_molar_mass,
         replacements,
+        calc_type,
     )
     _check_directories(config.output.mapfolder)
     _check_thresholds(config)
@@ -155,6 +162,7 @@ def parse_yaml(
     grid_folder: Optional[str],
     gas_molar_mass: Optional[str],
     replacements: Dict[str, str],
+    calc_type: Optional[str] = None,
 ) -> RootConfig:
     """
     Parses a yaml file to a corresponding `RootConfig` object. See `load_yaml` for
@@ -171,6 +179,31 @@ def parse_yaml(
         if "co2_mass_settings" not in config
         else CO2MassSettings(**config.get("co2_mass_settings", {}))
     )
+    if calc_type == "migration_time":
+        for p in config["input"]["properties"]:
+            if "lower_threshold" not in p and "name" in p:
+                if isinstance(p["name"], str):
+                    if p["name"] in [
+                        "AMFG",
+                        "XMF2",
+                        "AMFS",
+                    ]:
+                        p["lower_threshold"] = str(DEFAULT_LOWER_THRESHOLD_DISSOLVED)
+                elif isinstance(p["name"], list):
+                    p["lower_threshold"] = [str(DEFAULT_LOWER_THRESHOLD)] * len(
+                        p["name"]
+                    )
+                    for i in range(len(p["name"])):
+                        if p["name"][i] in [
+                            "AMFG",
+                            "XMF2",
+                            "AMFS",
+                        ]:
+                            p["lower_threshold"][i] = str(
+                                DEFAULT_LOWER_THRESHOLD_DISSOLVED
+                            )
+                        else:
+                            p["lower_threshold"][i] = str(DEFAULT_LOWER_THRESHOLD)
     return RootConfig(
         input=Input(**config["input"]),
         output=Output(**config["output"]),
@@ -218,18 +251,19 @@ def load_yaml(
         {"properties", "grid", "dates"}
     )
     if redundant_keywords:
-        raise ValueError(
+        error_text = (
             "The 'input' section only allows keywords 'properties' and 'grid'."
             " Keywords 'dates' and 'diffdates' are not implemented for this action."
             " Keywords representing properties must be defined under 'properties' for"
             f" this action. Redundant keywords: {', '.join(redundant_keywords)}"
         )
+        raise ValueError(format_error(error_text))
     if "filters" in config:
-        raise NotImplementedError("Keyword 'filters' is not supported by this action")
+        error_text = "Keyword 'filters' is not supported by this action"
+        raise NotImplementedError(format_error(error_text))
     if "superranges" in config.get("zonation", {}):
-        raise NotImplementedError(
-            "Keyword 'superranges' is not supported by this action"
-        )
+        error_text = "Keyword 'superranges' is not supported by this action"
+        raise NotImplementedError(format_error(error_text))
     return config
 
 
@@ -240,15 +274,14 @@ def _check_directories(map_folder: str):
             os.mkdir(map_folder)
             logging.info(f"\nCreated new map folder: {map_folder}")
         else:
-            error_txt = "\nERROR: Specified map folder is invalid (no parent folder):"
-            error_txt += f"\n    Path            : {map_folder}"
+            error_text = "\nERROR: Specified map folder is invalid (no parent folder):"
+            error_text += f"\n    Path            : {map_folder}"
             if not os.path.isabs(map_folder):
-                error_txt += f"\n    -> Absolute path: {os.path.abspath(map_folder)}"
-            error_txt += f"\n    Parent folder   : {parent_dir}"
+                error_text += f"\n    -> Absolute path: {os.path.abspath(map_folder)}"
+            error_text += f"\n    Parent folder   : {parent_dir}"
             if not os.path.isabs(parent_dir):
-                error_txt += f"\n    -> Absolute path: {os.path.abspath(parent_dir)}"
-            logging.error(error_txt)
-            raise FileNotFoundError(error_txt)
+                error_text += f"\n    -> Absolute path: {os.path.abspath(parent_dir)}"
+            raise FileNotFoundError(format_error(error_text))
 
 
 def _check_thresholds(config):
@@ -267,7 +300,7 @@ def _check_thresholds(config):
             warning_str += f'aggregation method "{agg_name}".'
             warning_str += "\n         => Removing the lower threshold, "
             warning_str += "using all grid cells in the calculations."
-            logging.warning(warning_str)
+            logging.warning(format_warning(warning_str))
 
 
 def extract_properties(
@@ -364,7 +397,7 @@ def _zonation_from_zproperty(
         if "zranges" not in zfile:
             error_text = "The yaml zone file must be in the format:\nzranges:\
             \n    - Zone1: [1, 5]\n    - Zone2: [6, 10]\n    - Zone3: [11, 14])"
-            raise Exception(error_text)
+            raise Exception(format_error(error_text))
         zranges = zfile["zranges"]
         return _zonation_from_zranges(grid, zranges)
     actnum = grid.actnum_indices
@@ -411,7 +444,9 @@ def create_map_template(
     if map_settings.templatefile is not None:
         surf = xtgeo.surface_from_file(map_settings.templatefile)
         if surf.rotation != 0.0:
-            raise NotImplementedError("Rotated surfaces are not handled correctly yet")
+            raise NotImplementedError(
+                format_error("Rotated surfaces are not handled correctly yet")
+            )
         logging.info(
             f"\nUsing template file {map_settings.templatefile}"
             f" to make surface representation."
@@ -429,10 +464,11 @@ def create_map_template(
         )
         if not all((s is not None for s in surf_kwargs.values())):
             missing = [k for k, v in surf_kwargs.items() if v is None]
-            raise ValueError(
+            error_text = (
                 "Failed to create map template due to partial map specification. "
                 f"Missing: {', '.join(missing)}"
             )
+            raise ValueError(format_error(error_text))
         logging.info(
             "\nUsing input coordinates (xinc etc) to make surface representation."
         )

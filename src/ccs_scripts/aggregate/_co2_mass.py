@@ -1,4 +1,5 @@
 import copy
+import os
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple, TypedDict, Union
 
@@ -15,7 +16,12 @@ from ccs_scripts.co2_containment.co2_calculation import (
     Scenario,
 )
 from ccs_scripts.utils.timer import Timer
-from ccs_scripts.utils.utils import fetch_properties, identify_gas_less_cells, is_subset
+from ccs_scripts.utils.utils import (
+    fetch_properties,
+    format_error,
+    identify_gas_less_cells,
+    is_subset,
+)
 
 CO2_MASS_PNAME = "CO2Mass"
 
@@ -59,7 +65,7 @@ def _get_gasless(properties: Dict[str, Dict[str, List[np.ndarray]]]) -> np.ndarr
             "CO2 containment calculation failed. "
             "Cannot find required properties SGAS+AMFG, SGAS+XMF2 or SGAS+AMFS"
         )
-        raise RuntimeError(error_text)
+        raise RuntimeError(format_error(error_text))
     return gasless
 
 
@@ -299,7 +305,7 @@ def _create_custom_egrid_kw(
             except KeyError as err:
                 if kw in mandatory_kws:
                     raise KeyError(
-                        f"Mandatory key '{kw}' is missing in grid_data"
+                        format_error(f"Mandatory key '{kw}' is missing in grid_data")
                     ) from err
                 pass
     return custom_egrid
@@ -394,8 +400,12 @@ def _convert_to_grid(
         mass_array[gas_idxs] = mass
         prop_grid_output: PropertyGridOutput = {
             "data": mass_array,
-            "unrst_path": grid_out_dir + "/" + str(MapName[name].value) + ".UNRST",
-            "egrid_path": grid_out_dir + "/" + str(MapName[name].value) + ".EGRID",
+            "unrst_path": os.path.join(
+                grid_out_dir, str(MapName[name].value) + ".UNRST"
+            ),
+            "egrid_path": os.path.join(
+                grid_out_dir, str(MapName[name].value) + ".EGRID"
+            ),
         }
         mass_grid_output[name] = prop_grid_output
     return mass_grid_output
