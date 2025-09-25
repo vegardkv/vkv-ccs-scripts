@@ -8,7 +8,7 @@ from resdata.grid import Grid
 from resdata.resfile import ResdataFile
 
 TRESHOLD_GAS = 1e-16
-TRESHOLD_DISSOLVED = 1e-16
+TRESHOLD_DISSOLVED = 1e-16  # Used also in co2_calculation to avoid numerical issues
 
 
 def format_warning(txt: Union[str, Exception]) -> str:

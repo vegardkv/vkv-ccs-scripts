@@ -20,6 +20,7 @@ from ccs_scripts.utils.utils import (
     identify_gas_less_cells,
     is_subset,
     reduce_properties,
+    TRESHOLD_DISSOLVED,
     try_prop,
 )
 
@@ -826,7 +827,7 @@ def _pflotran_co2_molar_volume(
                         )
                         / (1000 * dwat[date][x])
                     )
-                    if not mole_fractions["Aqueous"]["CO2"][date][x] == 0
+                    if not mole_fractions["Aqueous"]["CO2"][date][x] < TRESHOLD_DISSOLVED
                     else 0
                 )
                 for x in range(len(mole_fractions["Aqueous"]["CO2"][date]))
@@ -917,7 +918,7 @@ def _pflotran_co2_molar_volume(
         else:
             co2_molar_vol[date].extend([list(np.zeros_like(co2_molar_vol[date][0]))])
         co2_molar_vol[date][0] = [
-            0 if x < 0 or y == 0 else x
+            0 if x < 0 or y < TRESHOLD_DISSOLVED else x
             for x, y in zip(
                 co2_molar_vol[date][0], mole_fractions["Aqueous"]["CO2"][date]
             )
@@ -970,7 +971,7 @@ def _eclipse_co2_molar_volume(
                         / (1000 * water_density[x])
                         + 1 / (1000 * bwat[date][x])
                     )
-                    if not xmf2[date][x] == 0
+                    if not xmf2[date][x] < TRESHOLD_DISSOLVED
                     else 0
                 )
                 for x in range(len(xmf2[date]))
@@ -992,7 +993,7 @@ def _eclipse_co2_molar_volume(
         ]
         co2_molar_vol[date].extend([list(np.zeros_like(co2_molar_vol[date][0]))])
         co2_molar_vol[date][0] = [
-            0 if x < 0 or y == 0 else x
+            0 if x < 0 or y < TRESHOLD_DISSOLVED else x
             for x, y in zip(co2_molar_vol[date][0], xmf2[date])
         ]
         co2_molar_vol[date][1] = [
@@ -1343,13 +1344,21 @@ def _calculate_molar_vols_co2(
     if source == "PFlotran":
         y_prop = source_data.AMFG if scenario == Scenario.AQUIFER else source_data.AMFS
         y = y_prop[source_data.DATES[0]]
-        min_y = np.min(y)
-        where_min_amf_co2 = np.where(np.isclose(y, min_y))[0]
+        where_min_amf_co2 = np.where(y < TRESHOLD_DISSOLVED)[0]
+        if len(where_min_amf_co2) == 0:
+            prop_name = "AMFG" if scenario == Scenario.AQUIFER else "AMFS"
+            min_y = np.min(y)
+            where_min_amf_co2 = np.where(y < min_y + TRESHOLD_DISSOLVED)[0]
+            msg = (f"WARNING: Lack of cells with low (<{TRESHOLD_DISSOLVED}) "
+                   f"{prop_name}, needed for estimation of water density."
+                   f"\n         Using cells with {prop_name} < "
+                   f"{min_y + TRESHOLD_DISSOLVED} for estimation.")
+            logging.warning(format_warning(msg))
         # Where amfg is 0, or the closest approximation available
         dwat = source_data.DWAT[source_data.DATES[0]]
         water_density = np.array(
             [
-                (x[1] if np.isclose((y[x[0]]), 0) else np.mean(dwat[where_min_amf_co2]))
+                (x[1] if y[x[0]] < TRESHOLD_DISSOLVED else np.mean(dwat[where_min_amf_co2]))
                 for x in enumerate(dwat)
             ]
         )
@@ -1392,15 +1401,22 @@ def _calculate_molar_vols_co2(
         )
     else:
         y = source_data.XMF2[source_data.DATES[0]]
-        min_y = np.min(y)
-        where_min_xmf2 = np.where(np.isclose(y, min_y))[0]
+        where_min_xmf2 = np.where(y < TRESHOLD_DISSOLVED)[0]
+        if len(where_min_xmf2) == 0:
+            min_y = np.min(y)
+            where_min_xmf2 = np.where(y < min_y + TRESHOLD_DISSOLVED)[0]
+            msg = (f"WARNING: Lack of cells with low (<{TRESHOLD_DISSOLVED}) XMF2, "
+                   f"needed for estimation of water density."
+                   f"\n         Using cells with XMF2 < "
+                   f"{min_y + TRESHOLD_DISSOLVED} for estimation.")
+            logging.warning(format_warning(msg))
         # Where xmf2 is 0, or the closest approximation available
         bwat = source_data.BWAT[source_data.DATES[0]]
         water_density = np.array(
             [
                 (
                     water_molar_mass * x[1]
-                    if np.isclose((y[x[0]]), 0)
+                    if y[x[0]] < TRESHOLD_DISSOLVED
                     else water_molar_mass * np.mean(bwat[where_min_xmf2])
                 )
                 for x in enumerate(bwat)
