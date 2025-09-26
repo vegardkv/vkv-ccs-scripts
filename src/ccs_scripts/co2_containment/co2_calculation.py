@@ -13,6 +13,7 @@ from resdata.resfile import ResdataFile
 
 from ccs_scripts.utils.timer import Timer
 from ccs_scripts.utils.utils import (
+    THRESHOLD_DISSOLVED,
     fetch_properties,
     find_active_and_gasless_cells,
     format_error,
@@ -205,12 +206,12 @@ def _detect_eclipse_mole_fraction_props(
     """
     unrst = ResdataFile(unrst_file)
     suffix_count = 1
-    while True and suffix_count < 50:
+    while suffix_count < 50:
         tmp_x = try_prop(unrst, "XMF" + str(suffix_count))
         tmp_y = try_prop(unrst, "YMF" + str(suffix_count))
         if tmp_x is None and tmp_y is None:
             break
-        elif (tmp_x is None) != (tmp_y is None):
+        if (tmp_x is None) != (tmp_y is None):
             error_text = (
                 "Error: Number of components with XMF property differ from "
                 "the number of components with YMF"
@@ -826,7 +827,7 @@ def _pflotran_co2_molar_volume(
                         )
                         / (1000 * dwat[date][x])
                     )
-                    if not mole_fractions["Aqueous"]["CO2"][date][x] == 0
+                    if mole_fractions["Aqueous"]["CO2"][date][x] >= THRESHOLD_DISSOLVED
                     else 0
                 )
                 for x in range(len(mole_fractions["Aqueous"]["CO2"][date]))
@@ -917,7 +918,7 @@ def _pflotran_co2_molar_volume(
         else:
             co2_molar_vol[date].extend([list(np.zeros_like(co2_molar_vol[date][0]))])
         co2_molar_vol[date][0] = [
-            0 if x < 0 or y == 0 else x
+            0 if x < 0 or y < THRESHOLD_DISSOLVED else x
             for x, y in zip(
                 co2_molar_vol[date][0], mole_fractions["Aqueous"]["CO2"][date]
             )
@@ -970,7 +971,7 @@ def _eclipse_co2_molar_volume(
                         / (1000 * water_density[x])
                         + 1 / (1000 * bwat[date][x])
                     )
-                    if not xmf2[date][x] == 0
+                    if xmf2[date][x] >= THRESHOLD_DISSOLVED
                     else 0
                 )
                 for x in range(len(xmf2[date]))
@@ -992,7 +993,7 @@ def _eclipse_co2_molar_volume(
         ]
         co2_molar_vol[date].extend([list(np.zeros_like(co2_molar_vol[date][0]))])
         co2_molar_vol[date][0] = [
-            0 if x < 0 or y == 0 else x
+            0 if x < 0 or y < THRESHOLD_DISSOLVED else x
             for x, y in zip(co2_molar_vol[date][0], xmf2[date])
         ]
         co2_molar_vol[date][1] = [
@@ -1129,7 +1130,7 @@ def _calculate_co2_data_from_source_data(
                 "hydrocarbon gas molar mass must be provided"
             )
             raise ValueError(format_error(error_text))
-        elif scenario == Scenario.AQUIFER:
+        if scenario == Scenario.AQUIFER:
             gas_molar_mass = None
             oil_molar_mass = None
 
@@ -1343,13 +1344,27 @@ def _calculate_molar_vols_co2(
     if source == "PFlotran":
         y_prop = source_data.AMFG if scenario == Scenario.AQUIFER else source_data.AMFS
         y = y_prop[source_data.DATES[0]]
-        min_y = np.min(y)
-        where_min_amf_co2 = np.where(np.isclose(y, min_y))[0]
+        where_min_amf_co2 = np.where(y < THRESHOLD_DISSOLVED)[0]
+        if len(where_min_amf_co2) == 0:
+            prop_name = "AMFG" if scenario == Scenario.AQUIFER else "AMFS"
+            min_y = np.min(y)
+            where_min_amf_co2 = np.where(y < min_y + THRESHOLD_DISSOLVED)[0]
+            msg = (
+                f"WARNING: Lack of cells with low (<{THRESHOLD_DISSOLVED}) "
+                f"{prop_name}, needed for estimation of water density."
+                f"\n         Using cells with {prop_name} < "
+                f"{min_y + THRESHOLD_DISSOLVED} for estimation."
+            )
+            logging.warning(format_warning(msg))
         # Where amfg is 0, or the closest approximation available
         dwat = source_data.DWAT[source_data.DATES[0]]
         water_density = np.array(
             [
-                (x[1] if np.isclose((y[x[0]]), 0) else np.mean(dwat[where_min_amf_co2]))
+                (
+                    x[1]
+                    if y[x[0]] < THRESHOLD_DISSOLVED
+                    else np.mean(dwat[where_min_amf_co2])
+                )
                 for x in enumerate(dwat)
             ]
         )
@@ -1392,15 +1407,24 @@ def _calculate_molar_vols_co2(
         )
     else:
         y = source_data.XMF2[source_data.DATES[0]]
-        min_y = np.min(y)
-        where_min_xmf2 = np.where(np.isclose(y, min_y))[0]
+        where_min_xmf2 = np.where(y < THRESHOLD_DISSOLVED)[0]
+        if len(where_min_xmf2) == 0:
+            min_y = np.min(y)
+            where_min_xmf2 = np.where(y < min_y + THRESHOLD_DISSOLVED)[0]
+            msg = (
+                f"WARNING: Lack of cells with low (<{THRESHOLD_DISSOLVED}) XMF2, "
+                f"needed for estimation of water density."
+                f"\n         Using cells with XMF2 < "
+                f"{min_y + THRESHOLD_DISSOLVED} for estimation."
+            )
+            logging.warning(format_warning(msg))
         # Where xmf2 is 0, or the closest approximation available
         bwat = source_data.BWAT[source_data.DATES[0]]
         water_density = np.array(
             [
                 (
                     water_molar_mass * x[1]
-                    if np.isclose((y[x[0]]), 0)
+                    if y[x[0]] < THRESHOLD_DISSOLVED
                     else water_molar_mass * np.mean(bwat[where_min_xmf2])
                 )
                 for x in enumerate(bwat)
@@ -1472,21 +1496,20 @@ def _raise_missing_props_error(
         error_text += "\nMissing properties: "
         error_text += ", ".join(missing_props)
         raise ValueError(format_error(error_text))
-    elif any(prop in props_needed_eclipse for prop in active_props):
+    if any(prop in props_needed_eclipse for prop in active_props):
         missing_props = [x for x in props_needed_eclipse if x not in active_props]
         error_text = "Lacking some required properties to compute CO2 mass/volume."
         error_text += "\nAssumed source: Eclipse"
         error_text += "\nMissing properties: "
         error_text += ", ".join(missing_props)
         raise ValueError(format_error(error_text))
-    else:
-        error_text = "Lacking all required properties to compute CO2 mass/volume."
-        error_text += "\nNeed either:"
-        error_text += f"\n  PFlotran: \
-            {', '.join(props_needed_pflotran)}"
-        error_text += f"\n  Eclipse : \
-            {', '.join(props_needed_eclipse)}"
-        raise ValueError(format_error(error_text))
+    error_text = "Lacking all required properties to compute CO2 mass/volume."
+    error_text += "\nNeed either:"
+    error_text += f"\n  PFlotran: \
+        {', '.join(props_needed_pflotran)}"
+    error_text += f"\n  Eclipse : \
+        {', '.join(props_needed_eclipse)}"
+    raise ValueError(format_error(error_text))
 
 
 def _convert_from_kg_to_tons(co2_mass_output: Co2Data):
