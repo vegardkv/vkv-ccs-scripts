@@ -13,6 +13,7 @@ from resdata.resfile import ResdataFile
 
 from ccs_scripts.utils.timer import Timer
 from ccs_scripts.utils.utils import (
+    THRESHOLD_DISSOLVED,
     fetch_properties,
     find_active_and_gasless_cells,
     format_error,
@@ -20,7 +21,6 @@ from ccs_scripts.utils.utils import (
     identify_gas_less_cells,
     is_subset,
     reduce_properties,
-    THRESHOLD_DISSOLVED,
     try_prop,
 )
 
