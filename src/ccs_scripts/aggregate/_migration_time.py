@@ -13,8 +13,8 @@ def generate_migration_time_property(
 ) -> xtgeo.GridProperty:
     """
     Calculates a 3D grid property reflecting the migration time. Migration time is
-    defined as the first time step at which the property value exceeds the provided
-    `lower_threshold`.
+    defined as the first time step at which the property value exceeds its initial
+    condition
     """
     # Calculate time since simulation start
     times = [datetime.datetime.strptime(_prop.date, "%Y%m%d") for _prop in co2_props]
@@ -24,10 +24,11 @@ def generate_migration_time_property(
     t_prop = co2_props[0].copy(newname=MIGRATION_TIME_PNAME + "_" + prop_name)
     t_prop.values[~t_prop.values.mask] = np.inf
     for co2, dt in zip(
-        co2_props,
-        time_since_start,
+        co2_props[1:],
+        time_since_start[1:],
     ):
-        above_threshold = co2.values > co2_threshold
+        diff_prop = co2.values - co2_props[0].values
+        above_threshold = diff_prop > co2_threshold
         t_prop.values[above_threshold] = np.minimum(t_prop.values[above_threshold], dt)
     # Mask inf values
     if not isinstance(t_prop.values.mask, np.ndarray):

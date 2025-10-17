@@ -7,8 +7,8 @@ import yaml
 from resdata.grid import Grid
 from resdata.resfile import ResdataFile
 
-TRESHOLD_GAS = 1e-16
-TRESHOLD_DISSOLVED = 1e-16
+THRESHOLD_GAS = 1e-16
+THRESHOLD_DISSOLVED = 1e-16  # Used also in co2_calculation to avoid numerical issues
 
 
 def format_warning(txt: Union[str, Exception]) -> str:
@@ -103,10 +103,10 @@ def identify_gas_less_cells(
       np.ndarray
 
     """
-    gas_less = np.logical_and.reduce([np.abs(sgas[s]) < TRESHOLD_GAS for s in sgas])
+    gas_less = np.logical_and.reduce([np.abs(sgas[s]) < THRESHOLD_GAS for s in sgas])
     if dissolved_prop is not None:
         gas_less &= np.logical_and.reduce(
-            [np.abs(dissolved_prop[a]) < TRESHOLD_DISSOLVED for a in dissolved_prop]
+            [np.abs(dissolved_prop[a]) < THRESHOLD_DISSOLVED for a in dissolved_prop]
         )
     return gas_less
 
