@@ -167,6 +167,7 @@ class Co2Data:
       data_list (List): List with CO2 amounts calculated
                         at multiple time steps
       units (Literal): Units of the calculated amount of CO2
+      scenario (Scenario): Scenario information
       zone (np.ndarray): Zone information
       region (np.ndarray): Region information
 
@@ -179,6 +180,7 @@ class Co2Data:
     scenario: Scenario
     zone: Optional[np.ndarray] = None
     region: Optional[np.ndarray] = None
+    cell_size: Optional[float] = None
 
 
 @dataclass
@@ -481,6 +483,7 @@ def _extract_source_data(
     logging.info("Start extracting source data\n")
     grid = Grid(grid_file)
     unrst = ResdataFile(unrst_file)
+
     try:
         init = ResdataFile(init_file)
     except Exception:
@@ -500,6 +503,14 @@ def _extract_source_data(
     zone = _process_zones(zone_info, grid, grid_file, global_active_idx)
     region = _process_regions(region_info, grid, grid_file, init, active, gasless)
     vol0 = [grid.cell_volume(global_index=x) for x in global_active_idx]
+    try:
+        cell_size = np.median(vol0)
+        cell_dims = [grid.get_cell_dims(global_index=x) for x in global_active_idx]
+        _log_grid_cell_dimensions(vol0, cell_dims)
+    except Exception as e:
+        logging.info(format_warning(f"WARNING: Could not compute grid cell size: {e}"))
+        cell_size = None
+
     props_reduced["VOL"] = {d: vol0 for d in dates}
     if init is not None:
         try:
@@ -519,7 +530,37 @@ def _extract_source_data(
         region=region,
     )
     logging.info("\nDone extracting source data\n")
-    return source_data
+    return source_data, cell_size
+
+
+def _log_grid_cell_dimensions(vol0: list, cell_dims: list) -> None:
+    vol0_scaled = np.array(vol0) / 1000.0
+
+    dimensions = [
+        ("dx (m)", np.array([dim[0] for dim in cell_dims])),
+        ("dy (m)", np.array([dim[1] for dim in cell_dims])),
+        ("dz (m)", np.array([dim[2] for dim in cell_dims])),
+        ("vol (1000 m^3)", vol0_scaled),
+    ]
+
+    header = (
+        f"\n{'Grid dimension':<15} {'Min':>12} {'P10':>12} "
+        f"{'Median':>12} {'Mean':>12} {'P90':>12} {'Max':>12}"
+    )
+    logging.info(header)
+    logging.info(f"{'-' * 93}")
+
+    for label, values in dimensions:
+        row = (
+            f"{label:<15} "
+            f"{values.min():>12.1f} "
+            f"{np.percentile(values, 10):>12.1f} "
+            f"{np.median(values):>12.1f} "
+            f"{values.mean():>12.1f} "
+            f"{np.percentile(values, 90):>12.1f} "
+            f"{values.max():>12.1f}"
+        )
+        logging.info(row)
 
 
 def _check_grid_dimensions(
@@ -1792,7 +1833,7 @@ def calculate_co2(
         unrst_file, residual_trapping
     )
     timer.start("extract_source_data")
-    source_data = _extract_source_data(
+    source_data, cell_size = _extract_source_data(
         grid_file,
         unrst_file,
         source_data_updated,
@@ -1812,6 +1853,7 @@ def calculate_co2(
         cirrus_info_file=cirrus_info_file,
     )
     timer.stop("calculate_co2")
+    co2_data.cell_size = cell_size
     return co2_data
 
 

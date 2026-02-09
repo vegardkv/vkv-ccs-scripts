@@ -99,6 +99,12 @@ class CO2MassSettings:
     maps: Optional[List[str]] = None
     residual_trapping: bool = False
     cirrus_info_file: Optional[str] = None
+    calculate_migration_time_map: bool = False
+    migration_time_threshold: Optional[float] = None  # In tons
+
+    def __post_init__(self):
+        if self.migration_time_threshold is not None:
+            self.migration_time_threshold = float(self.migration_time_threshold)
 
 
 @dataclass

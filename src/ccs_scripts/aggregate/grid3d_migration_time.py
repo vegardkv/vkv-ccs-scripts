@@ -170,19 +170,13 @@ def _init_timer():
     }
 
 
-def main(arguments=None):
-    """
-    Calculates a migration time property and aggregates it to a 2D map
-    """
-    if arguments is None:
-        arguments = sys.argv[1:]
-    _init_timer()
-    timer = Timer()
-    timer.start("total")
-
-    config_ = _parser.process_arguments(arguments, map_type="migration_time")
+def generate_from_config(config_: _config.RootConfig):
     _check_config(config_)
     log_input_configuration(config_, map_type="migration_time")
+
+    # NBNB-AS: Handle somewhere else?:
+    assert config_.input.properties is not None, "Properties must be defined"
+
     p_spec = []
     if any(x.name in MIGRATION_TIME_PROPERTIES for x in config_.input.properties):
         removed_props = [
@@ -196,22 +190,35 @@ def main(arguments=None):
         if len(removed_props) > 0:
             warning_str = (
                 "\nWARNING: Migration time maps are "
-                "not supported for these properties: ",
-                ", ".join(str(x) for x in removed_props),
+                "not supported for these properties: "
+                + ", ".join(str(x) for x in removed_props)
             )
             logging.warning(format_warning(warning_str))
+    elif any(x.name is None for x in config_.input.properties):
+        # For co2 mass properties
+        p_spec.extend([x for x in config_.input.properties])
     else:
         error_text = (
             "Migration time maps are not supported for "
             "any of the properties provided: "
         )
-        error_text += f"{', '.join([x.name for x in config_.input.properties])}"
+        ep = [x.name if x.name is not None else "-" for x in config_.input.properties]
+        error_text += f"{', '.join(ep)}"
         raise ValueError(format_error(error_text))
+
     config_.input.properties = p_spec
     temp_dir = tempfile.mkdtemp()
     logging.info(f"\nMaking temporary directory for 3D grids: {temp_dir}")
     try:
         for prop in config_.input.properties:
+            # NBNB-AS: Better handling than assert here...:
+            assert (
+                prop.name is not None
+            ), "Property name must be defined for migration time maps"
+            assert (
+                prop.lower_threshold is not None
+            ), "Lower threshold must be defined for migration time maps"
+
             t_prop = calculate_migration_time_property(
                 prop.source,
                 prop.name,
@@ -219,11 +226,26 @@ def main(arguments=None):
                 config_.input.grid,
                 config_.input.dates,
             )
-            temp_path = os.path.join(temp_dir, prop.name)
+            tmp_subdir = prop.name if prop.name is not None else "co2_total_mass"
+            temp_path = os.path.join(temp_dir, tmp_subdir)
             migration_time_property_to_map(config_, t_prop, temp_path)
     finally:
         logging.info(f"\nDeleting temporary directory for 3D grids: {temp_dir}")
         shutil.rmtree(temp_dir)
+
+
+def main(arguments=None):
+    """
+    Calculates a migration time property and aggregates it to a 2D map
+    """
+    if arguments is None:
+        arguments = sys.argv[1:]
+    _init_timer()
+    timer = Timer()
+    timer.start("total")
+
+    config_ = _parser.process_arguments(arguments, map_type="migration_time")
+    generate_from_config(config_)
 
     timer.stop("total")
     timer.report()
