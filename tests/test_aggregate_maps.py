@@ -1,7 +1,7 @@
 import os
 import shutil
-from pathlib import Path
 import tempfile
+from pathlib import Path
 
 import pytest
 import xtgeo
@@ -206,15 +206,15 @@ def test_aggregated_map8():
             str(result_y),
         ]
     )
-    
+
     # Run the exact same config but with weight_by_dz: no
     cfg_content = Path(cfg).read_text()
     cfg_content_no_weight = cfg_content.replace("weight_by_dz: yes", "weight_by_dz: no")
-    
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as tmp_cfg:
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yml", delete=False) as tmp_cfg:
         tmp_cfg.write(cfg_content_no_weight)
         tmp_cfg_path = tmp_cfg.name
-    
+
     try:
         # Run with weight_by_dz: no
         grid3d_aggregate_map.main(
@@ -227,16 +227,16 @@ def test_aggregated_map8():
                 str(result_n),
             ]
         )
-        
+
         # Compare results - maps with dz-weighting should have higher values
         surf_with_dz = xtgeo.surface_from_file(result_y / "all--sum_permx.gri")
         surf_without_dz = xtgeo.surface_from_file(result_n / "all--sum_permx.gri")
-        
+
         # Assert that dz-weighted values are higher than non-weighted
         assert surf_with_dz.values.mean() > surf_without_dz.values.mean()
         assert surf_with_dz.values.max() > surf_without_dz.values.max()
     finally:
         # Clean up temp file
         os.unlink(tmp_cfg_path)
-    
+
     shutil.rmtree(str(Path(result)))
