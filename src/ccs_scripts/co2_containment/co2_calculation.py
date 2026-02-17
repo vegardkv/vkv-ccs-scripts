@@ -959,7 +959,7 @@ def _compositional_co2mass(
     soil = source_data.SOIL
     eff_vols = source_data.RPORV if pore_volume_prop == "RPORV" else source_data.PORV
     conv_fact = co2_molar_mass
-    if co2_position is not None and source != "Cirrus COMP":
+    if co2_position is not None and source == "Cirrus COMP":
         xmf_co2 = getattr(source_data, f"XMF{co2_position}")
         ymf_co2 = getattr(source_data, f"YMF{co2_position}")
     else:
@@ -986,7 +986,7 @@ def _compositional_co2mass(
         else:
             zmf_co2 = (
                 getattr(source_data, f"ZMF{co2_position}")
-                if co2_position is not None and source != "Cirrus COMP"
+                if co2_position is not None and source == "Cirrus COMP"
                 else source_data.ZMF2
             )
             phase_moles[date].extend([boil[date] * soil[date] * eff_vols[date]])
@@ -1365,7 +1365,7 @@ def _calculate_co2_data_from_source_data(
     comp_molar_masses = None
     if source == "Cirrus COMP":
         if cirrus_info_file is None:
-            error_text = "Source: Cirrus EOS COMP"
+            error_text = "Source: Cirrus COMP"
             error_text += f"\nScenario: {scenario.name}."
             error_text += (
                 "\nTo compute mass or actual volume in this scenario "
