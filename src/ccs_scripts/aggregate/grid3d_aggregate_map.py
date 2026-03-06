@@ -68,12 +68,15 @@ def _check_input(computesettings: ComputeSettings) -> None:
 
 
 def modify_mass_property_names(properties: List[xtgeo.GridProperty]):
-    if any("MASS" in p.name for p in properties):
+    if any("MASS" in p.name for p in properties):  # NBNB-AS: Can remove this check?
         for p in properties:
             if "MASS" in p.name:
-                mass_prop_name = p.name.split("--")[0]
-                mass_prop_date = p.name.split("--")[1]
-                p.name = f"{MapName[mass_prop_name].value}--{mass_prop_date}"
+                parts = p.name.split("--")
+                mass_prop_name = parts[0]
+                p.name = f"{MapName[mass_prop_name].value}"
+                if len(parts) > 1:
+                    mass_prop_date = parts[1]
+                    p.name += f"--{mass_prop_date}"
 
 
 def _log_grid_info(grid: xtgeo.Grid) -> None:

@@ -28,8 +28,8 @@ from ccs_scripts.utils.utils import (
 
 DEFAULT_CO2_MOLAR_MASS = 44.0
 DEFAULT_WATER_MOLAR_MASS = 18.0
-PROPERTIES_NEEDED_PFLOTRAN = ["DGAS", "DWAT", "AMFG", "YMFG"]
-PROPERTIES_NEEDED_ECLIPSE = ["BGAS", "BWAT", "XMF2", "YMF2"]
+PROPERTIES_NEEDED_CIRRUS = ["SGAS", "DGAS", "DWAT"]
+PROPERTIES_NEEDED_ECLIPSE = ["SGAS", "BGAS", "BWAT", "XMF2", "YMF2"]
 
 RELEVANT_PROPERTIES = [
     "RPORV",
@@ -167,6 +167,7 @@ class Co2Data:
       data_list (List): List with CO2 amounts calculated
                         at multiple time steps
       units (Literal): Units of the calculated amount of CO2
+      scenario (Scenario): Scenario information
       zone (np.ndarray): Zone information
       region (np.ndarray): Region information
 
@@ -179,6 +180,7 @@ class Co2Data:
     scenario: Scenario
     zone: Optional[np.ndarray] = None
     region: Optional[np.ndarray] = None
+    cell_size: Optional[float] = None
 
 
 @dataclass
@@ -217,13 +219,12 @@ def _extract_molar_masses(
 
     Args:
         cirrus_info_file (str): Path to the Cirrus info CSV file.
-        source: (str): Data source
         scenario (Scenario): Which scenario co2 mass is computed for
-
-
     Returns:
         tuple[float | None, float | None]: (gas_molar_mass, oil_molar_mass)
     """
+    if scenario == Scenario.AQUIFER:
+        return None, None
     info_data = pd.read_csv(cirrus_info_file)
     info_data.columns = info_data.columns.str.strip()
     info_data["Mnemonic"] = info_data["Mnemonic"].str.strip()
@@ -250,6 +251,31 @@ def _extract_molar_masses(
     return gas_molar_mass, oil_molar_mass
 
 
+def _extract_comp_molar_masses(
+    cirrus_info_file: str,
+):
+    info_data = pd.read_csv(cirrus_info_file)
+    info_data.columns = info_data.columns.str.strip()
+    info_data["Mnemonic"] = info_data["Mnemonic"].str.strip()
+    mw_df = (
+        info_data.loc[
+            info_data["Mnemonic"].str.startswith("MW_", na=False),
+            ["Mnemonic", "Value"],
+        ]
+        .assign(
+            Value=lambda df: df["Value"].astype(float),
+            Component=lambda df: df["Mnemonic"].str.replace("MW_", "", regex=False),
+        )
+        .reset_index(drop=True)
+    )
+    molar_weights = {
+        row["Component"]: (i + 1, row["Value"]) for i, row in mw_df.iterrows()
+    }
+    if "CO2" not in molar_weights:
+        raise ValueError("CO2 molar mass not found in cirrus info file")
+    return molar_weights
+
+
 def _detect_eclipse_mole_fraction_props(
     unrst_file: str,
     props_to_extract: List,
@@ -265,27 +291,57 @@ def _detect_eclipse_mole_fraction_props(
     """
     unrst = ResdataFile(unrst_file)
     suffix_count = 1
+    review_z = True
     while suffix_count < 50:
         tmp_x = try_prop(unrst, "XMF" + str(suffix_count))
         tmp_y = try_prop(unrst, "YMF" + str(suffix_count))
+        tmp_z = try_prop(unrst, "ZMF" + str(suffix_count))
+        if suffix_count == 1 and tmp_z is None:
+            review_z = False
         if tmp_x is None and tmp_y is None:
             break
-        if (tmp_x is None) != (tmp_y is None):
-            error_text = (
-                "Error: Number of components with XMF property differ from "
-                "the number of components with YMF"
-            )
-            raise ValueError(format_error(error_text))
+        if review_z:
+            if (tmp_x is None) != (tmp_y is None) or (tmp_z is None) != (tmp_y is None):
+                error_text = (
+                    "Error: Number of components with XMF property differ from "
+                    "the number of components with YMF"
+                )
+                raise ValueError(format_error(error_text))
+            else:
+                current_source_data.extend(
+                    [
+                        (
+                            name + str(suffix_count),
+                            Optional[Dict[str, np.ndarray]],
+                            None,
+                        )
+                        for name in ["XMF", "YMF", "ZMF"]
+                    ]
+                )
+                props_to_extract.extend(
+                    [name + str(suffix_count) for name in ["XMF", "YMF", "ZMF"]]
+                )
         else:
-            current_source_data.extend(
-                [
-                    (name + str(suffix_count), Optional[Dict[str, np.ndarray]], None)
-                    for name in ["XMF", "YMF"]
-                ]
-            )
-            props_to_extract.extend(
-                [name + str(suffix_count) for name in ["XMF", "YMF"]]
-            )
+            if (tmp_x is None) != (tmp_y is None):
+                error_text = (
+                    "Error: Number of components with XMF property differ from "
+                    "the number of components with YMF"
+                )
+                raise ValueError(format_error(error_text))
+            else:
+                current_source_data.extend(
+                    [
+                        (
+                            name + str(suffix_count),
+                            Optional[Dict[str, np.ndarray]],
+                            None,
+                        )
+                        for name in ["XMF", "YMF"]
+                    ]
+                )
+                props_to_extract.extend(
+                    [name + str(suffix_count) for name in ["XMF", "YMF"]]
+                )
         suffix_count += 1
     return current_source_data, props_to_extract
 
@@ -315,6 +371,75 @@ def _n_components(active_props: List):
         )
         raise ValueError(format_error(error_text))
     return max_xmf_suffix
+
+
+def _compute_phases_avg_mol_weight(
+    source_data,
+    comp_molar_masses: Optional[Dict[str, Tuple[int, float]]],
+    water_molar_mass: float = DEFAULT_WATER_MOLAR_MASS,
+):
+    if comp_molar_masses is None:
+        raise ValueError(
+            "comp_molar_masses cannot be None when computing phase average molar "
+            "mass weight"
+        )
+    dates = source_data.DATES
+    gas_avg_mol_weight = {}
+    oil_avg_mol_weight = {}
+    water_avg_mol_weight = {}
+    for date in dates:
+        water_avg_mol_weight_at_date = {}
+        gas_avg_mol_weight_at_date = {}
+        oil_avg_mol_weight_at_date = {}
+        for idx, molar_mass in comp_molar_masses.values():
+            ymf_tmp_date = getattr(source_data, f"YMF{idx}")[date]
+            xmf_tmp_date = getattr(source_data, f"XMF{idx}")[date]
+            gas_avg_mol_weight_at_date[idx] = molar_mass * ymf_tmp_date
+            oil_avg_mol_weight_at_date[idx] = (
+                molar_mass * xmf_tmp_date if Scenario.DEPLETED_OIL_GAS_FIELD else None
+            )
+            water_avg_mol_weight_at_date[idx] = (
+                molar_mass * xmf_tmp_date
+                if not Scenario.DEPLETED_OIL_GAS_FIELD
+                else (water_molar_mass / len(comp_molar_masses))
+                * np.ones_like(xmf_tmp_date)
+            )
+        gas_avg_mol_weight[date] = np.sum(
+            list(gas_avg_mol_weight_at_date.values()), axis=0
+        )
+        oil_avg_mol_weight[date] = np.sum(
+            list(oil_avg_mol_weight_at_date.values()), axis=0
+        )
+        water_avg_mol_weight[date] = np.sum(
+            list(water_avg_mol_weight_at_date.values()), axis=0
+        )
+    return water_avg_mol_weight, gas_avg_mol_weight, oil_avg_mol_weight
+
+
+def _convert_phase_density_from_mass_to_mole(
+    source_data,
+    comp_molar_masses: Optional[Dict[str, Tuple[int, float]]],
+    water_molar_mass: float = DEFAULT_WATER_MOLAR_MASS,
+):
+    water_avg_mol_weight, gas_avg_mol_weight, oil_avg_mol_weight = (
+        _compute_phases_avg_mol_weight(source_data, comp_molar_masses, water_molar_mass)
+    )
+    dates = source_data.DATES
+    dwat = source_data.DWAT
+    dgas = source_data.DGAS
+    doil = source_data.DOIL
+    bwat = {}
+    bgas = {}
+    boil = {}
+    for date in dates:
+        bwat[date] = dwat[date] / water_avg_mol_weight[date]
+        bgas[date] = dgas[date] / gas_avg_mol_weight[date]
+        boil[date] = (
+            doil[date] / oil_avg_mol_weight[date]
+            if Scenario.DEPLETED_OIL_GAS_FIELD
+            else np.zeros_like(bgas[date])
+        )
+    return bwat, bgas, boil
 
 
 def _find_props_to_extract(unrst_file: str, residual_trapping: bool):
@@ -358,6 +483,7 @@ def _extract_source_data(
     logging.info("Start extracting source data\n")
     grid = Grid(grid_file)
     unrst = ResdataFile(unrst_file)
+
     try:
         init = ResdataFile(init_file)
     except Exception:
@@ -377,6 +503,14 @@ def _extract_source_data(
     zone = _process_zones(zone_info, grid, grid_file, global_active_idx)
     region = _process_regions(region_info, grid, grid_file, init, active, gasless)
     vol0 = [grid.cell_volume(global_index=x) for x in global_active_idx]
+    try:
+        cell_size = np.median(vol0)
+        cell_dims = [grid.get_cell_dims(global_index=x) for x in global_active_idx]
+        _log_grid_cell_dimensions(vol0, cell_dims)
+    except Exception as e:
+        logging.info(format_warning(f"WARNING: Could not compute grid cell size: {e}"))
+        cell_size = None
+
     props_reduced["VOL"] = {d: vol0 for d in dates}
     if init is not None:
         try:
@@ -396,7 +530,37 @@ def _extract_source_data(
         region=region,
     )
     logging.info("\nDone extracting source data\n")
-    return source_data
+    return source_data, cell_size
+
+
+def _log_grid_cell_dimensions(vol0: list, cell_dims: list) -> None:
+    vol0_scaled = np.array(vol0) / 1000.0
+
+    dimensions = [
+        ("dx (m)", np.array([dim[0] for dim in cell_dims])),
+        ("dy (m)", np.array([dim[1] for dim in cell_dims])),
+        ("dz (m)", np.array([dim[2] for dim in cell_dims])),
+        ("vol (1000 m^3)", vol0_scaled),
+    ]
+
+    header = (
+        f"\n{'Grid dimension':<15} {'Min':>12} {'P10':>12} "
+        f"{'Median':>12} {'Mean':>12} {'P90':>12} {'Max':>12}"
+    )
+    logging.info(header)
+    logging.info(f"{'-' * 93}")
+
+    for label, values in dimensions:
+        row = (
+            f"{label:<15} "
+            f"{values.min():>12.1f} "
+            f"{np.percentile(values, 10):>12.1f} "
+            f"{np.median(values):>12.1f} "
+            f"{values.mean():>12.1f} "
+            f"{np.percentile(values, 90):>12.1f} "
+            f"{values.max():>12.1f}"
+        )
+        logging.info(row)
 
 
 def _check_grid_dimensions(
@@ -624,7 +788,7 @@ def _set_calc_type_from_input_string(calc_type_input: str) -> CalculationType:
     return CalculationType[calc_type_input]
 
 
-def _pflotran_co2mass(
+def _cirrus_co2mass(
     source_data,
     scenario: Scenario,
     pore_volume_prop: str,
@@ -634,7 +798,7 @@ def _pflotran_co2mass(
     oil_molar_mass: Optional[float] = None,
 ) -> Dict[str, List[np.ndarray]]:
     """
-    Calculates CO2 mass based on the existing properties in PFlotran
+    Calculates CO2 mass based on the existing properties in Cirrus
 
     Args:
       source_data (SourceData): Data with the information of the necessary properties
@@ -762,14 +926,16 @@ def _pflotran_co2mass(
     return co2_mass
 
 
-def _eclipse_co2mass(
+def _compositional_co2mass(
     source_data,
     scenario: Scenario,
+    source: str,
     pore_volume_prop: str,
-    co2_molar_mass: float = DEFAULT_CO2_MOLAR_MASS,
+    co2_molar_mass: Optional[float] = None,
+    co2_position: Optional[float] = None,
 ) -> Dict[str, List[np.ndarray]]:
     """
-    Calculates CO2 mass based on the existing properties in Eclipse
+    Calculates CO2 mass based on molar weight and mole fraction of the components
 
     Args:
       source_data (SourceData): Data with the information of the necessary properties
@@ -786,8 +952,6 @@ def _eclipse_co2mass(
     bgas = source_data.BGAS
     bwat = source_data.BWAT
     boil = source_data.BOIL
-    xmf2 = source_data.XMF2
-    ymf2 = source_data.YMF2
     sgas = source_data.SGAS
     swat = source_data.SWAT
     sgtrh = source_data.SGTRH
@@ -795,7 +959,12 @@ def _eclipse_co2mass(
     soil = source_data.SOIL
     eff_vols = source_data.RPORV if pore_volume_prop == "RPORV" else source_data.PORV
     conv_fact = co2_molar_mass
-
+    if co2_position is not None and source == "Cirrus COMP":
+        xmf_co2 = getattr(source_data, f"XMF{co2_position}")
+        ymf_co2 = getattr(source_data, f"YMF{co2_position}")
+    else:
+        xmf_co2 = source_data.XMF2
+        ymf_co2 = source_data.YMF2
     phase_moles = {}
     co2_mass = {}
     for date in dates:
@@ -810,20 +979,24 @@ def _eclipse_co2mass(
         if scenario != Scenario.DEPLETED_OIL_GAS_FIELD:
             phase_moles[date].extend([np.zeros_like(phase_moles[date][0])])
             co2_mass[date] = [
-                conv_fact * phase_moles[date][0] * xmf2[date],
-                conv_fact * phase_moles[date][1] * ymf2[date],
+                conv_fact * phase_moles[date][0] * xmf_co2[date],
+                conv_fact * phase_moles[date][1] * ymf_co2[date],
                 phase_moles[date][2],
             ]
         else:
-            zmf2 = source_data.ZMF2
+            zmf_co2 = (
+                getattr(source_data, f"ZMF{co2_position}")
+                if co2_position is not None and source == "Cirrus COMP"
+                else source_data.ZMF2
+            )
             phase_moles[date].extend([boil[date] * soil[date] * eff_vols[date]])
             total_moles = (
                 phase_moles[date][0] + phase_moles[date][1] + phase_moles[date][2]
             )
-            total_co2_mass = total_moles * zmf2[date] * conv_fact
+            total_co2_mass = total_moles * zmf_co2[date] * conv_fact
             co2_mass[date] = [
-                phase_moles[date][1] * ymf2[date] * conv_fact,
-                phase_moles[date][2] * xmf2[date] * conv_fact,
+                phase_moles[date][1] * ymf_co2[date] * conv_fact,
+                phase_moles[date][2] * xmf_co2[date] * conv_fact,
             ]
             co2_mass[date].insert(
                 0, total_co2_mass - co2_mass[date][0] - co2_mass[date][1]
@@ -848,7 +1021,7 @@ def _eclipse_co2mass(
     return co2_mass
 
 
-def _pflotran_co2_molar_volume(
+def _cirrus_co2_molar_volume(
     source_data,
     scenario: Scenario,
     water_density: np.ndarray,
@@ -860,7 +1033,7 @@ def _pflotran_co2_molar_volume(
     oil_molar_mass: Optional[float] = None,
 ) -> Dict:
     """
-    Calculates CO2 molar volume (mol/m3) based on the existing properties in PFlotran
+    Calculates CO2 molar volume (mol/m3) based on the existing properties in Cirrus
 
     Args:
       source_data (SourceData): Data with the information of the necessary properties
@@ -1199,7 +1372,18 @@ def _calculate_co2_data_from_source_data(
     source, scenario = _find_source_and_scenario(residual_trapping, active_props)
     gas_molar_mass = None
     oil_molar_mass = None
-    if source == "PFlotran" and scenario != Scenario.AQUIFER:
+    comp_molar_masses = None
+    if source == "Cirrus COMP":
+        if cirrus_info_file is None:
+            error_text = "Source: Cirrus COMP"
+            error_text += f"\nScenario: {scenario.name}."
+            error_text += (
+                "\nTo compute mass or actual volume in this scenario "
+                "path to cirrus INFO file must be provided."
+            )
+            raise ValueError(format_error(error_text))
+        comp_molar_masses = _extract_comp_molar_masses(cirrus_info_file)
+    elif source == "Cirrus":
         gas_molar_mass, oil_molar_mass = _extract_molar_masses(
             scenario, cirrus_info_file
         )
@@ -1221,6 +1405,7 @@ def _calculate_co2_data_from_source_data(
             water_molar_mass,
             gas_molar_mass,
             oil_molar_mass,
+            comp_molar_masses,
         )
     elif calc_type == CalculationType.CELL_VOLUME:
         co2_amount = _calc_co2_amount_cell_volume(scenario, source_data, props_check)
@@ -1259,37 +1444,44 @@ def _find_pore_volume_prop(active_props: List[str]) -> str:
 def _find_source_and_scenario(
     residual_trapping: bool, active_props: List[str]
 ) -> Tuple[str, Scenario]:
-    props_needed_pflotran = PROPERTIES_NEEDED_PFLOTRAN.copy()
+    props_needed_cirrus = PROPERTIES_NEEDED_CIRRUS.copy()
     props_needed_eclipse = PROPERTIES_NEEDED_ECLIPSE.copy()
     if residual_trapping:
-        props_needed_pflotran.append("SGSTRAND")
+        props_needed_cirrus.append("SGSTRAND")
         props_needed_eclipse.append("SGTRH")
-
-    scenario = Scenario.AQUIFER
-    if is_subset(props_needed_pflotran, active_props):
-        source = "PFlotran"
+    if is_subset(props_needed_cirrus, active_props):
+        source = "Cirrus"
         if is_subset(["AMFS", "YMFO"], active_props):
             scenario = Scenario.DEPLETED_OIL_GAS_FIELD
         elif is_subset(["AMFS"], active_props):
             scenario = Scenario.DEPLETED_GAS_FIELD
+        elif is_subset(["AMFG", "YMFG"], active_props):
+            scenario = Scenario.AQUIFER
+        elif is_subset(["XMF2"], active_props):
+            source = "Cirrus COMP"
+            if _n_components(active_props) <= 3:
+                scenario = Scenario.AQUIFER
+            elif is_subset(["SOIL"], active_props):
+                scenario = Scenario.DEPLETED_OIL_GAS_FIELD
+            else:
+                scenario = Scenario.DEPLETED_GAS_FIELD
+        else:
+            error_text = (
+                "Need to provide either AMFS, AMFG or XMF2 to perform the calculations"
+            )
+            raise ValueError(format_error(error_text))
     elif is_subset(props_needed_eclipse, active_props):
         source = "Eclipse"
-        if is_subset(["XMF2", "SOIL"], active_props):
+        if _n_components(active_props) <= 3:
+            scenario = Scenario.AQUIFER
+        elif is_subset(["SOIL"], active_props):
             scenario = Scenario.DEPLETED_OIL_GAS_FIELD
-        # NBNB: X/YMF properties ending in 2 are assumed to correspond to CO2
-        elif _n_components(active_props) > 3:
+        else:
             scenario = Scenario.DEPLETED_GAS_FIELD
-            active_props = [
-                prop
-                for prop in active_props
-                if not (prop.startswith("XMF") or prop.startswith("YMF"))
-                or prop.endswith("2")
-            ]
     else:
         _raise_missing_props_error(
-            active_props, props_needed_pflotran, props_needed_eclipse
+            active_props, props_needed_cirrus, props_needed_eclipse
         )
-
     return source, scenario
 
 
@@ -1304,9 +1496,10 @@ def _calc_co2_amount(
     water_molar_mass: float,
     gas_molar_mass: Optional[float],
     oil_molar_mass: Optional[float],
+    comp_molar_masses: Optional[Dict[str, Tuple[int, float]]],
 ) -> Co2Data:
-    if source == "PFlotran":
-        co2_mass_cell = _pflotran_co2mass(
+    if source == "Cirrus":
+        co2_mass_cell = _cirrus_co2mass(
             source_data,
             scenario,
             pore_volume_prop,
@@ -1316,8 +1509,25 @@ def _calc_co2_amount(
             oil_molar_mass,
         )
     else:
-        co2_mass_cell = _eclipse_co2mass(
-            source_data, scenario, pore_volume_prop, co2_molar_mass
+        co2_position = None
+        if source == "Cirrus COMP" and comp_molar_masses is not None:
+            bwat, bgas, boil = _convert_phase_density_from_mass_to_mole(
+                source_data,
+                comp_molar_masses,
+                water_molar_mass,
+            )
+            source_data.BWAT = bwat
+            source_data.BGAS = bgas
+            source_data.BOIL = boil
+            co2_position = comp_molar_masses["CO2"][0]
+
+        co2_mass_cell = _compositional_co2mass(
+            source_data,
+            scenario,
+            source,
+            pore_volume_prop,
+            co2_molar_mass,
+            co2_position,
         )
     co2_mass_output = Co2Data(
         source_data.x_coord,
@@ -1417,7 +1627,7 @@ def _calculate_molar_vols_co2(
     gas_molar_mass: Optional[float],
     oil_molar_mass: Optional[float],
 ):
-    if source == "PFlotran":
+    if source == "Cirrus":
         y_prop = source_data.AMFG if scenario == Scenario.AQUIFER else source_data.AMFS
         y = y_prop[source_data.DATES[0]]
         where_min_amf_co2 = np.where(y < THRESHOLD_DISSOLVED)[0]
@@ -1470,7 +1680,7 @@ def _calculate_molar_vols_co2(
                     for x in enumerate(doil)
                 ]
             )
-        molar_vols_co2 = _pflotran_co2_molar_volume(
+        molar_vols_co2 = _cirrus_co2_molar_volume(
             source_data,
             scenario,
             water_density,
@@ -1562,13 +1772,13 @@ def _calc_co2_amount_cell_volume(
 
 def _raise_missing_props_error(
     active_props: List[str],
-    props_needed_pflotran: List[str],
+    props_needed_cirrus: List[str],
     props_needed_eclipse: List[str],
 ):
-    if any(prop in props_needed_pflotran for prop in active_props):
-        missing_props = [x for x in props_needed_pflotran if x not in active_props]
+    if any(prop in props_needed_cirrus for prop in active_props):
+        missing_props = [x for x in props_needed_cirrus if x not in active_props]
         error_text = "Lacking some required properties to compute CO2 mass/volume."
-        error_text += "\nAssumed source: PFlotran"
+        error_text += "\nAssumed source: Cirrus"
         error_text += "\nMissing properties: "
         error_text += ", ".join(missing_props)
         raise ValueError(format_error(error_text))
@@ -1581,8 +1791,8 @@ def _raise_missing_props_error(
         raise ValueError(format_error(error_text))
     error_text = "Lacking all required properties to compute CO2 mass/volume."
     error_text += "\nNeed either:"
-    error_text += f"\n  PFlotran: \
-        {', '.join(props_needed_pflotran)}"
+    error_text += f"\n  Cirrus: \
+        {', '.join(props_needed_cirrus)}"
     error_text += f"\n  Eclipse : \
         {', '.join(props_needed_eclipse)}"
     raise ValueError(format_error(error_text))
@@ -1633,7 +1843,7 @@ def calculate_co2(
         unrst_file, residual_trapping
     )
     timer.start("extract_source_data")
-    source_data = _extract_source_data(
+    source_data, cell_size = _extract_source_data(
         grid_file,
         unrst_file,
         source_data_updated,
@@ -1653,6 +1863,7 @@ def calculate_co2(
         cirrus_info_file=cirrus_info_file,
     )
     timer.stop("calculate_co2")
+    co2_data.cell_size = cell_size
     return co2_data
 
 

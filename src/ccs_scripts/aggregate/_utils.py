@@ -14,8 +14,8 @@ def log_input_configuration(config_: RootConfig, map_type: str = "aggregate") ->
     """
     Log the provided input
     """
-    version = "v0.13.1"
-    is_dev_version = False
+    version = "v0.14.0"
+    is_dev_version = True
     if is_dev_version:
         version += "_dev"
         try:
@@ -268,6 +268,19 @@ def log_input_configuration(config_: RootConfig, map_type: str = "aggregate") ->
             f"{'  Include residual trapping':<{col1}} : "
             f"{_bool_str(cms.residual_trapping)}"
         )
+        logging.info(
+            f"{'  Calculate migration time map':<{col1}} : "
+            f"{_bool_str(cms.calculate_migration_time_map)}"
+        )
+        if cms.calculate_migration_time_map:
+            threshold_text = (
+                cms.migration_time_threshold
+                if cms.migration_time_threshold is not None
+                else "- (will be calculated automatically)"
+            )
+            logging.info(
+                f"{'  Migration time threshold (tons)':<{col1}} : " f"{threshold_text}"
+            )
 
 
 def _bool_str(value: bool):
