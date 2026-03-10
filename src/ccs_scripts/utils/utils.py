@@ -110,28 +110,6 @@ def test_for_soil(props: dict):
     return soil if max_val > tol else None
 
 
-def _read_props(
-    unrst: ResdataFile,
-    prop_names: List,
-) -> dict:
-    """
-    Reads the properties in prop_names from a ResdataFile named unrst
-
-    Args:
-      unrst (ResdataFile): ResdataFile to read prop_names from
-      prop_names (List): List with property names to be read
-
-    Returns:
-      dict
-    """
-    active_props = {}
-    for p in prop_names:
-        result = try_prop(unrst, p)
-        if result is not None:
-            active_props.update({p: result})
-    return active_props
-
-
 def fetch_properties(
     unrst: ResdataFile, props_to_extract: List
 ) -> Tuple[Dict[str, Dict[str, List[np.ndarray]]], List[str]]:
@@ -147,12 +125,41 @@ def fetch_properties(
       Tuple
 
     """
-    dates = [d.strftime("%Y%m%d") for d in unrst.report_dates]
-    props = _read_props(unrst, props_to_extract)
-    test_unrst_consistency(dates, props)
-    props = {
-        p: {d[1]: props[p][d[0]].numpy_copy() for d in enumerate(dates)} for p in props
-    }
+    report_dates = unrst.report_dates
+    props: dict[str, dict[str, np.ndarray]] = {}
+    dates_with_missing_data: list[str] = []
+    for p in props_to_extract:
+        if not unrst.has_kw(p):
+            # Ignore parameters not found in unrst. Parameters will
+            # typically include static properties which are found in
+            # the INIT file, but these are not relevant in this
+            # context.
+            continue
+        props[p] = {}
+        for d in unrst.report_dates:
+            d_formatted = d.strftime("%Y%m%d")
+            try:
+                # We fetch via restart_get_kw, since this also works
+                # for LGR models.
+                kw = unrst.restart_get_kw(p, d)
+            except IndexError as e:
+                # If the property is not defined for this date in the
+                # UNRST file, log the error and continue
+                dates_with_missing_data.append(d_formatted)
+                continue
+
+            props[p][d_formatted] = kw.numpy_copy()
+    if dates_with_missing_data:
+        # Raise exception in case of error. An alternative is to
+        # remove dates with missing data, but that is less
+        # transparent.
+        raise ValueError(
+            format_error(
+                f"At least one of the properties is missing data for "
+                f"the following dates: {', '.join(dates_with_missing_data)}"
+            )
+        )
+
     if "SOIL" not in props:
         soil = test_for_soil(props)
         if soil is not None:
@@ -173,40 +180,7 @@ def fetch_properties(
         "\nRelevant properties extracted:"
         f"\n    {', '.join(list(props.keys()))}\n"
     )
-    return props, dates
-
-
-def test_unrst_consistency(dates: List, props: dict) -> None:
-    """
-    Checks consistency between UNRST dates and properties.
-
-    Args:
-        dates (list): List of dates
-        props (list): List with lists of properties at each date
-
-    """
-
-    lengths = {name: len(values) for name, values in props.items()}
-
-    unique_lengths = set(lengths.values())
-    if len(unique_lengths) != 1:
-        raise ValueError(
-            format_error(
-                "Inconsistent UNRST properties lengths: "
-                + ", ".join(f"{k}={v}" for k, v in lengths.items())
-            )
-        )
-
-    n_time_steps = unique_lengths.pop()
-    n_dates = len(dates)
-
-    if n_time_steps != n_dates:
-        raise ValueError(
-            format_error(
-                f"Mismatch between number of dates ({n_dates}) "
-                f"and number of timesteps for properties({n_time_steps})"
-            )
-        )
+    return props, [d.strftime("%Y%m%d") for d in report_dates]
 
 
 def identify_gas_less_cells(
