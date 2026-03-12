@@ -2,6 +2,7 @@
 """Methods for CO2 containment calculations"""
 
 import copy
+import datetime
 import logging
 from dataclasses import dataclass, fields, make_dataclass
 from enum import Enum
@@ -148,6 +149,11 @@ class Co2DataAtTimeStep:
     volume_coverage: np.ndarray
     trapped_gas_phase: np.ndarray
     free_gas_phase: np.ndarray
+
+    @property
+    def as_datetime(self) -> datetime.datetime:
+        """Return date as a datetime object."""
+        return datetime.datetime.strptime(self.date, "%Y%m%d")
 
     def total_mass(self) -> np.ndarray:
         """

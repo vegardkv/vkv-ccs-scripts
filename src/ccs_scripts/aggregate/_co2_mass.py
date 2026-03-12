@@ -1,5 +1,4 @@
 import copy
-import datetime
 import os
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple, TypedDict, Union
@@ -148,13 +147,13 @@ def translate_co2data_to_property(
     store_all = "all" in maps or len(maps) == 0
 
     custom_egrid = _create_custom_egrid_kw(grid_data)
-    report_date_to_idx = {
-        d.strftime("%Y%m%d"): i for i, d in enumerate(unrst_data.report_dates)
-    }
+    report_date_to_seqnum = dict(
+        zip(unrst_data.report_dates, unrst_data.report_steps)
+    )
 
     for co2_at_date in co2_data.data_list:
-        dt = datetime.datetime.strptime(co2_at_date.date, "%Y%m%d")
-        date_i32 = np.int32(report_date_to_idx[co2_at_date.date])
+        dt = co2_at_date.as_datetime
+        date_i32 = np.int32(report_date_to_seqnum[dt])
         mass_as_grid = _convert_to_grid(
             co2_at_date, gas_idxs, n_act_cells, grid_out_dir
         )
