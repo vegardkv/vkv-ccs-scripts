@@ -63,11 +63,8 @@ def generate_co2_mass_maps(config_: RootConfig):
     )
 
     dates = config_.input.dates
-    all_dates = [x.date for x in co2_data.data_list]
-    dates_idx = list(range(len(all_dates)))
     if len(dates) > 0:
         co2_data.data_list = [x for x in co2_data.data_list if x.date in dates]
-        dates_idx = [i for i, val in enumerate(all_dates) if val in dates]
     grid_folder, delete_tmp_grid_folder = _process_grid_dir(config_.output.gridfolder)
     try:
         properties_to_extract = copy.deepcopy(RELEVANT_PROPERTIES)
@@ -81,7 +78,6 @@ def generate_co2_mass_maps(config_: RootConfig):
             co2_mass_settings,
             grid_folder,
             properties_to_extract,
-            dates_idx,
         )
 
         co2_mass_property_to_map(

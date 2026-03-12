@@ -1,4 +1,5 @@
 import copy
+import datetime
 import os
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple, TypedDict, Union
@@ -70,13 +71,36 @@ def _get_gasless(properties: Dict[str, Dict[str, List[np.ndarray]]]) -> np.ndarr
     return gasless
 
 
+def _append_mass_step(
+    mass_data: Dict[str, List[Any]],
+    seqnum: np.int32,
+    intehead: np.ndarray,
+    logihead: np.ndarray,
+    kw_name: str,
+    grid_output: PropertyGridOutput,
+    custom_egrid: List,
+) -> None:
+    """Append one report-step's keywords to a mass_data accumulator."""
+    mass_data["unrst_kw"].extend(
+        [
+            ("SEQNUM  ", [seqnum]),
+            ("INTEHEAD", intehead),
+            ("LOGIHEAD", logihead),
+            (kw_name, grid_output["data"]),
+        ]
+    )
+    if grid_output["unrst_path"] not in mass_data["unrst_path"]:
+        mass_data["unrst_path"].append(grid_output["unrst_path"])
+        mass_data["egrid_path"].append(grid_output["egrid_path"])
+        mass_data["egrid_kw"].extend(custom_egrid)
+
+
 def translate_co2data_to_property(
     co2_data: Co2Data,
     grid_file: str,
     co2_mass_settings: CO2MassSettings,
     grid_out_dir: str,
     properties_to_extract: List[str],
-    dates_idx: List[int],
 ) -> List[Optional[str]]:
     """
     Convert CO2 data into 3D GridProperty
@@ -124,136 +148,53 @@ def translate_co2data_to_property(
     store_all = "all" in maps or len(maps) == 0
 
     custom_egrid = _create_custom_egrid_kw(grid_data)
+    report_date_to_idx = {
+        d.strftime("%Y%m%d"): i for i, d in enumerate(unrst_data.report_dates)
+    }
 
-    for date_idx, co2_at_date in zip(dates_idx, co2_data.data_list):
-        date_i32 = np.int32(date_idx)  # To avoid downcast warning later
+    for co2_at_date in co2_data.data_list:
+        dt = datetime.datetime.strptime(co2_at_date.date, "%Y%m%d")
+        date_i32 = np.int32(report_date_to_idx[co2_at_date.date])
         mass_as_grid = _convert_to_grid(
             co2_at_date, gas_idxs, n_act_cells, grid_out_dir
         )
-        logihead_array = np.array([x for x in unrst_data["LOGIHEAD"][date_idx]])
+        intehead = unrst_data.restart_get_kw("INTEHEAD", dt).numpyView()
+        logihead_array = np.array(
+            [x for x in unrst_data.restart_get_kw("LOGIHEAD", dt)]
+        )
         if store_all or "total_co2" in maps:
-            total_mass_data["unrst_kw"].extend(
-                [
-                    ("SEQNUM  ", [date_i32]),
-                    ("INTEHEAD", unrst_data["INTEHEAD"][date_idx].numpyView()),
-                    ("LOGIHEAD", logihead_array),
-                    ("MASS_TOT", mass_as_grid["MASS_TOT"]["data"]),
-                ]
+            _append_mass_step(
+                total_mass_data, date_i32, intehead, logihead_array,
+                "MASS_TOT", mass_as_grid["MASS_TOT"], custom_egrid,
             )
-            if (
-                mass_as_grid["MASS_TOT"]["unrst_path"]
-                not in total_mass_data["unrst_path"]
-            ):
-                total_mass_data["unrst_path"].append(
-                    mass_as_grid["MASS_TOT"]["unrst_path"]
-                )
-                total_mass_data["egrid_path"].append(
-                    mass_as_grid["MASS_TOT"]["egrid_path"]
-                )
-                total_mass_data["egrid_kw"].extend(custom_egrid)
         if store_all or "dissolved_water_co2" in maps:
-            dissolved_water_mass_data["unrst_kw"].extend(
-                [
-                    ("SEQNUM  ", [date_i32]),
-                    ("INTEHEAD", unrst_data["INTEHEAD"][date_idx].numpyView()),
-                    ("LOGIHEAD", logihead_array),
-                    ("MASSDISW", mass_as_grid["MASSDISW"]["data"]),
-                ]
+            _append_mass_step(
+                dissolved_water_mass_data, date_i32, intehead, logihead_array,
+                "MASSDISW", mass_as_grid["MASSDISW"], custom_egrid,
             )
-            if (
-                mass_as_grid["MASSDISW"]["unrst_path"]
-                not in dissolved_water_mass_data["unrst_path"]
-            ):
-                dissolved_water_mass_data["unrst_path"].append(
-                    mass_as_grid["MASSDISW"]["unrst_path"]
-                )
-                dissolved_water_mass_data["egrid_path"].append(
-                    mass_as_grid["MASSDISW"]["egrid_path"]
-                )
-                dissolved_water_mass_data["egrid_kw"].extend(custom_egrid)
         if (
             store_all or "dissolved_oil_co2" in maps
         ) and co2_data.scenario == Scenario.DEPLETED_OIL_GAS_FIELD:
-            dissolved_oil_mass_data["unrst_kw"].extend(
-                [
-                    ("SEQNUM  ", [date_i32]),
-                    ("INTEHEAD", unrst_data["INTEHEAD"][date_idx].numpyView()),
-                    ("LOGIHEAD", logihead_array),
-                    ("MASSDISO", mass_as_grid["MASSDISO"]["data"]),
-                ]
+            _append_mass_step(
+                dissolved_oil_mass_data, date_i32, intehead, logihead_array,
+                "MASSDISO", mass_as_grid["MASSDISO"], custom_egrid,
             )
-            if (
-                mass_as_grid["MASSDISO"]["unrst_path"]
-                not in dissolved_oil_mass_data["unrst_path"]
-            ):
-                dissolved_oil_mass_data["unrst_path"].append(
-                    mass_as_grid["MASSDISO"]["unrst_path"]
-                )
-                dissolved_oil_mass_data["egrid_path"].append(
-                    mass_as_grid["MASSDISO"]["egrid_path"]
-                )
-                dissolved_oil_mass_data["egrid_kw"].extend(custom_egrid)
         if (
             store_all or "free_co2" in maps
         ) and not co2_mass_settings.residual_trapping:
-            free_mass_data["unrst_kw"].extend(
-                [
-                    ("SEQNUM  ", [date_i32]),
-                    ("INTEHEAD", unrst_data["INTEHEAD"][date_idx].numpyView()),
-                    ("LOGIHEAD", logihead_array),
-                    ("MASS_GAS", mass_as_grid["MASS_GAS"]["data"]),
-                ]
+            _append_mass_step(
+                free_mass_data, date_i32, intehead, logihead_array,
+                "MASS_GAS", mass_as_grid["MASS_GAS"], custom_egrid,
             )
-            if (
-                mass_as_grid["MASS_GAS"]["unrst_path"]
-                not in free_mass_data["unrst_path"]
-            ):
-                free_mass_data["unrst_path"].append(
-                    mass_as_grid["MASS_GAS"]["unrst_path"]
-                )
-                free_mass_data["egrid_path"].append(
-                    mass_as_grid["MASS_GAS"]["egrid_path"]
-                )
-                free_mass_data["egrid_kw"].extend(custom_egrid)
         if (store_all or "free_co2" in maps) and co2_mass_settings.residual_trapping:
-            free_gas_mass_data["unrst_kw"].extend(
-                [
-                    ("SEQNUM  ", [date_i32]),
-                    ("INTEHEAD", unrst_data["INTEHEAD"][date_idx].numpyView()),
-                    ("LOGIHEAD", logihead_array),
-                    ("MASSFGAS", mass_as_grid["MASSFGAS"]["data"]),
-                ]
+            _append_mass_step(
+                free_gas_mass_data, date_i32, intehead, logihead_array,
+                "MASSFGAS", mass_as_grid["MASSFGAS"], custom_egrid,
             )
-            if (
-                mass_as_grid["MASSFGAS"]["unrst_path"]
-                not in free_gas_mass_data["unrst_path"]
-            ):
-                free_gas_mass_data["unrst_path"].append(
-                    mass_as_grid["MASSFGAS"]["unrst_path"]
-                )
-                free_gas_mass_data["egrid_path"].append(
-                    mass_as_grid["MASSFGAS"]["egrid_path"]
-                )
-                free_gas_mass_data["egrid_kw"].extend(custom_egrid)
-            trapped_gas_mass_data["unrst_kw"].extend(
-                [
-                    ("SEQNUM  ", [date_i32]),
-                    ("INTEHEAD", unrst_data["INTEHEAD"][date_idx].numpyView()),
-                    ("LOGIHEAD", logihead_array),
-                    ("MASSTGAS", mass_as_grid["MASSTGAS"]["data"]),
-                ]
+            _append_mass_step(
+                trapped_gas_mass_data, date_i32, intehead, logihead_array,
+                "MASSTGAS", mass_as_grid["MASSTGAS"], custom_egrid,
             )
-            if (
-                mass_as_grid["MASSTGAS"]["unrst_path"]
-                not in trapped_gas_mass_data["unrst_path"]
-            ):
-                trapped_gas_mass_data["unrst_path"].append(
-                    mass_as_grid["MASSTGAS"]["unrst_path"]
-                )
-                trapped_gas_mass_data["egrid_path"].append(
-                    mass_as_grid["MASSTGAS"]["egrid_path"]
-                )
-                trapped_gas_mass_data["egrid_kw"].extend(custom_egrid)
     out = [
         _export_unrst_and_kw_data(free_mass_data),
         _export_unrst_and_kw_data(dissolved_water_mass_data),
