@@ -183,9 +183,10 @@ def test_mass_maps_with_lgr():
             co2_mass_settings=CO2MassSettings(
                 unrst_source=str(data_dir / "DEP_GAS_4.UNRST"),
                 init_source=str(data_dir / "DEP_GAS_4.INIT"),
-                cirrus_info_file=None,
+                cirrus_info_file=str(data_dir / "DEP_GAS_4_INFO.csv"),
             ),
         )
 
         grid3d_co2_mass_map.generate_co2_mass_maps(config)
-        assert len(Path(output_dir).glob("*.gri")) == 7
+        # 9 time stamps, 3 maps per timestamp:
+        assert len(list(Path(output_dir).glob("*.gri"))) == 9 * 3
