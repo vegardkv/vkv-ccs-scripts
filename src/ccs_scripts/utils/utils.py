@@ -142,7 +142,7 @@ def fetch_properties(
                 # We fetch via restart_get_kw, since this also works
                 # for LGR models.
                 kw = unrst.restart_get_kw(p, d)
-            except IndexError as e:
+            except IndexError:
                 # If the property is not defined for this date in the
                 # UNRST file, log the error and continue
                 dates_with_missing_data.append(d_formatted)

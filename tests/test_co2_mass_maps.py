@@ -1,7 +1,7 @@
 import os
 import shutil
-from pathlib import Path
 import tempfile
+from pathlib import Path
 
 from resdata.resfile import FortIO, ResdataFile, openFortIO
 
@@ -168,6 +168,7 @@ def test_co2_mass_map_residual_trapping_cirrus():
 
 def test_mass_maps_with_lgr():
     from pathlib import Path
+
     from ccs_scripts.aggregate._config import CO2MassSettings, Input, Output, RootConfig
 
     data_dir = Path(__file__).parent / "lgr-model"
