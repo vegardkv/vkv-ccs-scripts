@@ -44,7 +44,7 @@ class PropertyGridOutput(TypedDict):
     egrid_path: str
 
 
-def _get_gasless(properties: Dict[str, Dict[str, List[np.ndarray]]]) -> np.ndarray:
+def _get_gasless(properties: Dict[str, Dict[str, np.ndarray]]) -> np.ndarray:
     """
     Identifies global index for grid cells without CO2 based on Gas Saturation (SGAS)
     and Mole Fraction of Gas in dissolved phase (AMFG/XMF2)
