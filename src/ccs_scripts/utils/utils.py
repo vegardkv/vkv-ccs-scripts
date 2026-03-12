@@ -112,7 +112,7 @@ def test_for_soil(props: dict):
 
 def fetch_properties(
     unrst: ResdataFile, props_to_extract: List
-) -> Tuple[Dict[str, Dict[str, List[np.ndarray]]], List[str]]:
+) -> Tuple[Dict[str, Dict[str, np.ndarray]], List[str]]:
     """
     Fetches the properties in props_to_extract from a ResdataFile
     named unrst
@@ -207,7 +207,7 @@ def identify_gas_less_cells(
 
 
 def reduce_properties(
-    properties: Dict[str, Dict[str, List[np.ndarray]]], keep_idx: np.ndarray
+    properties: Dict[str, Dict[str, np.ndarray]], keep_idx: np.ndarray
 ) -> Dict:
     """
     Reduces the data of given properties by indices in keep_idx
