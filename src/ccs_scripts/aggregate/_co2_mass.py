@@ -147,9 +147,7 @@ def translate_co2data_to_property(
     store_all = "all" in maps or len(maps) == 0
 
     custom_egrid = _create_custom_egrid_kw(grid_data)
-    report_date_to_seqnum = dict(
-        zip(unrst_data.report_dates, unrst_data.report_steps)
-    )
+    report_date_to_seqnum = dict(zip(unrst_data.report_dates, unrst_data.report_steps))
 
     for co2_at_date in co2_data.data_list:
         dt = co2_at_date.as_datetime
@@ -163,36 +161,66 @@ def translate_co2data_to_property(
         )
         if store_all or "total_co2" in maps:
             _append_mass_step(
-                total_mass_data, date_i32, intehead, logihead_array,
-                "MASS_TOT", mass_as_grid["MASS_TOT"], custom_egrid,
+                total_mass_data,
+                date_i32,
+                intehead,
+                logihead_array,
+                "MASS_TOT",
+                mass_as_grid["MASS_TOT"],
+                custom_egrid,
             )
         if store_all or "dissolved_water_co2" in maps:
             _append_mass_step(
-                dissolved_water_mass_data, date_i32, intehead, logihead_array,
-                "MASSDISW", mass_as_grid["MASSDISW"], custom_egrid,
+                dissolved_water_mass_data,
+                date_i32,
+                intehead,
+                logihead_array,
+                "MASSDISW",
+                mass_as_grid["MASSDISW"],
+                custom_egrid,
             )
         if (
             store_all or "dissolved_oil_co2" in maps
         ) and co2_data.scenario == Scenario.DEPLETED_OIL_GAS_FIELD:
             _append_mass_step(
-                dissolved_oil_mass_data, date_i32, intehead, logihead_array,
-                "MASSDISO", mass_as_grid["MASSDISO"], custom_egrid,
+                dissolved_oil_mass_data,
+                date_i32,
+                intehead,
+                logihead_array,
+                "MASSDISO",
+                mass_as_grid["MASSDISO"],
+                custom_egrid,
             )
         if (
             store_all or "free_co2" in maps
         ) and not co2_mass_settings.residual_trapping:
             _append_mass_step(
-                free_mass_data, date_i32, intehead, logihead_array,
-                "MASS_GAS", mass_as_grid["MASS_GAS"], custom_egrid,
+                free_mass_data,
+                date_i32,
+                intehead,
+                logihead_array,
+                "MASS_GAS",
+                mass_as_grid["MASS_GAS"],
+                custom_egrid,
             )
         if (store_all or "free_co2" in maps) and co2_mass_settings.residual_trapping:
             _append_mass_step(
-                free_gas_mass_data, date_i32, intehead, logihead_array,
-                "MASSFGAS", mass_as_grid["MASSFGAS"], custom_egrid,
+                free_gas_mass_data,
+                date_i32,
+                intehead,
+                logihead_array,
+                "MASSFGAS",
+                mass_as_grid["MASSFGAS"],
+                custom_egrid,
             )
             _append_mass_step(
-                trapped_gas_mass_data, date_i32, intehead, logihead_array,
-                "MASSTGAS", mass_as_grid["MASSTGAS"], custom_egrid,
+                trapped_gas_mass_data,
+                date_i32,
+                intehead,
+                logihead_array,
+                "MASSTGAS",
+                mass_as_grid["MASSTGAS"],
+                custom_egrid,
             )
     out = [
         _export_unrst_and_kw_data(free_mass_data),
