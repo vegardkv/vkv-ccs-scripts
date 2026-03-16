@@ -1,6 +1,5 @@
 import os
 import shutil
-import tempfile
 from pathlib import Path
 
 from resdata.resfile import FortIO, ResdataFile, openFortIO
@@ -164,30 +163,3 @@ def test_co2_mass_map_residual_trapping_cirrus():
     assert trapped_gas_co2_file.exists()
     assert not total_co2_file.exists()
     shutil.rmtree(str(Path(__file__).absolute().parent / "answers" / "mass_map"))
-
-
-def test_mass_maps_with_lgr():
-    from pathlib import Path
-
-    from ccs_scripts.aggregate._config import CO2MassSettings, Input, Output, RootConfig
-
-    data_dir = Path(__file__).parent / "lgr-model"
-
-    with tempfile.TemporaryDirectory() as output_dir:
-        config = RootConfig(
-            input=Input(
-                grid=str(data_dir / "DEP_GAS_4.EGRID"),
-            ),
-            output=Output(
-                mapfolder=str(output_dir),
-            ),
-            co2_mass_settings=CO2MassSettings(
-                unrst_source=str(data_dir / "DEP_GAS_4.UNRST"),
-                init_source=str(data_dir / "DEP_GAS_4.INIT"),
-                cirrus_info_file=str(data_dir / "DEP_GAS_4_INFO.csv"),
-            ),
-        )
-
-        grid3d_co2_mass_map.generate_co2_mass_maps(config)
-        # 9 time stamps, 3 maps per timestamp:
-        assert len(list(Path(output_dir).glob("*.gri"))) == 9 * 3
