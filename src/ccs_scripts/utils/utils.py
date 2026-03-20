@@ -1,3 +1,4 @@
+from collections.abc import Iterable
 import logging
 import sys
 from typing import Dict, List, Optional, Tuple, Union
@@ -198,10 +199,20 @@ def identify_gas_less_cells(
       np.ndarray
 
     """
-    gas_less = np.logical_and.reduce([np.abs(sgas[s]) < THRESHOLD_GAS for s in sgas])
-    if dissolved_prop is not None:
+    return identify_gas_less_cells_from_iterator(
+        sgas.values(),
+        dissolved_prop.values() if dissolved_prop is not None else None,
+    )
+
+
+def identify_gas_less_cells_from_iterator(
+    sgas_iter: Iterable[np.ndarray],
+    dissolved_iter: Iterable[np.ndarray] | None
+) -> np.ndarray:
+    gas_less = np.logical_and.reduce([np.abs(s) < THRESHOLD_GAS for s in sgas_iter])
+    if dissolved_iter is not None:
         gas_less &= np.logical_and.reduce(
-            [np.abs(dissolved_prop[a]) < THRESHOLD_DISSOLVED for a in dissolved_prop]
+            [np.abs(d) < THRESHOLD_DISSOLVED for d in dissolved_iter]
         )
     return gas_less
 

@@ -76,6 +76,7 @@ def _get_dummy_co2_masses():
     source_data = SourceData(
         x_coord,
         y_coord,
+        active_cells=np.ones(dims, dtype=bool),
         PORV={date: _random_prop(dims, rng, 0.1, 0.3) for date in dates},
         VOL=vol,
         DATES=dates,
@@ -269,6 +270,7 @@ def test_reek_grid():
     source_data = SourceData(
         x_coord,
         y_coord,
+        active_cells=grid.get_actnum().values,
         PORV={"2042": np.ones_like(poro) * 0.1},
         VOL=vol,
         DATES=["2042"],
@@ -329,6 +331,7 @@ def test_reek_grid():
     source_data_with_trapping = SourceData(
         x_coord,
         y_coord,
+        active_cells=grid.get_actnum().values,
         PORV={"2042": np.ones_like(poro) * 0.1},
         VOL=vol,
         DATES=["2042"],

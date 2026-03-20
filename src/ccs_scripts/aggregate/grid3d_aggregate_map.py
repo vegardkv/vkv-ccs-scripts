@@ -162,7 +162,7 @@ def generate_maps(
     timer.stop("extract_properties")
     _log_properties_info(properties)
 
-    modify_mass_property_names(properties)
+    # modify_mass_property_names(properties)
     _filters: List[Tuple[str, Optional[Union[np.ndarray, None]]]] = []
     if computesettings.all:
         _filters.append(("all", None))
