@@ -22,6 +22,7 @@ from ccs_scripts.utils.utils import (
     format_error,
     format_warning,
     identify_gas_less_cells,
+    identify_gas_less_cells_from_iterator,
     is_subset,
     log_saturation_summaries,
     reduce_properties,
@@ -68,6 +69,7 @@ class SourceData:
 
     x_coord: np.ndarray
     y_coord: np.ndarray
+    active_cells: np.ndarray  # 3D array with True where calculations are performed
     DATES: List[str]
     VOL: Optional[Dict[str, np.ndarray]] = None
     SOIL: Optional[Dict[str, np.ndarray]] = None
@@ -231,6 +233,7 @@ class Co2Data:
 
     x_coord: np.ndarray
     y_coord: np.ndarray
+    active_cells: np.ndarray  # 3D array with True where calculations are performed
     data_list: List[Co2DataAtTimeStep]
     units: Literal["kg", "tons", "m3"]
     scenario: Scenario
@@ -523,46 +526,91 @@ def _extract_source_data(
 
     """
     logging.info("Start extracting source data\n")
-    grid = Grid(grid_file)
-    unrst = ResdataFile(unrst_file)
+    grid = xtgeo.grid_from_file(grid_file)
+    unrst_names = [p for p in props_to_extract if p in xtgeo.list_gridproperties(unrst_file)]
+    unrst = xtgeo.gridproperties_from_file(
+        unrst_file, grid=grid, names=unrst_names, dates="all", namestyle=1
+    )
 
-    try:
-        init = ResdataFile(init_file)
-    except Exception:
-        init = None
+    init: xtgeo.GridProperties | None = None
+    if init_file is not None:
+        try:
+            # Extract everything from the init file. This is (probably) small
+            # amounts of data compared to the dynamic part
+            init = xtgeo.gridproperties_from_file(init_file, grid=grid, names="all")
+        except Exception:
+            init = None
+    if init is None:
         logging.info(format_warning("No INIT-file loaded"))
-    properties, dates = fetch_properties(unrst, props_to_extract)
 
-    active, gasless = find_active_and_gasless_cells(grid, properties, True)
-    global_active_idx = active[~gasless]
+    # Determine reduced set of active cells based on actnum and gasless cells
+    dissolved_props = [d for d in ["AMFS", "AMFG", "XMF2"] if d in unrst_names]
+    if len(dissolved_props) == 0 or "SGAS" not in unrst_names:
+        error_text = (
+            "CO2 containment calculation failed. "
+            "Cannot find required properties SGAS+AMFG, SGAS+XMF2 or SGAS+AMFS"
+        )
+        raise RuntimeError(format_error(error_text))
 
-    props_reduced = reduce_properties(properties, ~gasless)
+    gasless = identify_gas_less_cells_from_iterator(
+        (p.values for p in unrst.props if p.name.startswith("SGAS")),
+        (p.values for p in unrst.props if p.name.startswith(dissolved_props[0])),
+    )
+    # TODO: whenever active cells are used in general, make
+    # sure that they are bool in type, otherwise, unexpected
+    # bugs can occur due to numpy treating non-bool arrays as
+    # indices. Add assertions everywhere?
+    active_cells = grid.actnum_array.astype(bool) & ~gasless
+
+    # dict[property][date] with only active and non-gasless cells, used for all calculations
+    dates = unrst.dates
+    extracted_names = unrst_names
+    props_reduced: dict[str, dict[str, np.ndarray | None]] = {
+        p: {d: None for d in dates} for p in extracted_names
+    }
+    for prop in unrst.props:
+        parts = prop.name.split("--")
+        if len(parts) == 1:
+            pname = prop.name
+            pdate = prop.date
+        else:
+            pname = parts[0]
+            # Prefer prop.date, but fall back to parsing from the name if not present
+            pdate = prop.date or parts[1]
+        if pname not in props_reduced:
+            continue
+        # .values is a masked array. actnum should correspond to the mask, but
+        # "active_cells" also include gas-less cells, so we'll use that instead
+        props_reduced[pname][pdate] = prop.values[active_cells].data
+
+    # TODO: warn about missing dates (i.e. None-values in props_reduced)
+
     log_saturation_summaries(props_reduced)
     # Tuple with (x,y,z) for each cell:
-    xyz = [grid.get_xyz(global_index=a) for a in global_active_idx]
-    cells_x = np.array([coord[0] for coord in xyz])
-    cells_y = np.array([coord[1] for coord in xyz])
+    xp, yp, _ = grid.get_xyz()
+    cells_x = xp.values[active_cells].data
+    cells_y = yp.values[active_cells].data
 
-    zone = _process_zones(zone_info, grid, grid_file, global_active_idx)
-    region = _process_regions(region_info, grid, grid_file, init, active, gasless)
-    vol0 = [grid.cell_volume(global_index=x) for x in global_active_idx]
+    zone = _process_zones(zone_info, grid, active_cells)
+    region = _process_regions(region_info, grid, init, active_cells)
+    vol = grid.get_bulk_volume().values[active_cells]
     try:
-        cell_size = np.median(vol0)
-        cell_dims = [grid.get_cell_dims(global_index=x) for x in global_active_idx]
-        _log_grid_cell_dimensions(vol0, cell_dims)
+        cell_size = np.median(vol)
+        dx = grid.get_dx().values[active_cells].data
+        dy = grid.get_dy().values[active_cells].data
+        dz = grid.get_dz().values[active_cells].data
+        _log_grid_cell_dimensions(vol, dx, dy, dz)
     except Exception as e:
         logging.info(format_warning(f"WARNING: Could not compute grid cell size: {e}"))
         cell_size = None
 
-    props_reduced["VOL"] = {d: vol0 for d in dates}
+    props_reduced["VOL"] = {d: vol for d in dates}
     if init is not None:
-        try:
-            porv = init["PORV"]
+        porv = init.get_prop_by_name("PORV")
+        if porv is not None:
             props_reduced["PORV"] = {
-                d: porv[0].numpy_copy()[global_active_idx] for d in dates
+                d: porv.values[active_cells].data for d in dates
             }
-        except KeyError:
-            pass
     # Separate the indexed mole-fraction props from the static ones
     xmfs = {i: props_reduced.pop(f"XMF{i}") for i in component_indices if f"XMF{i}" in props_reduced}
     ymfs = {i: props_reduced.pop(f"YMF{i}") for i in component_indices if f"YMF{i}" in props_reduced}
@@ -570,6 +618,7 @@ def _extract_source_data(
     source_data = SourceData(
         cells_x,
         cells_y,
+        active_cells,
         dates,
         **dict(props_reduced.items()),
         zone=zone,
@@ -582,13 +631,13 @@ def _extract_source_data(
     return source_data, cell_size
 
 
-def _log_grid_cell_dimensions(vol0: list, cell_dims: list) -> None:
+def _log_grid_cell_dimensions(vol0: list, dx: np.ndarray, dy: np.ndarray, dz: np.ndarray) -> None:
     vol0_scaled = np.array(vol0) / 1000.0
 
     dimensions = [
-        ("dx (m)", np.array([dim[0] for dim in cell_dims])),
-        ("dy (m)", np.array([dim[1] for dim in cell_dims])),
-        ("dz (m)", np.array([dim[2] for dim in cell_dims])),
+        ("dx (m)", dx),
+        ("dy (m)", dy),
+        ("dz (m)", dz),
         ("vol (1000 m^3)", vol0_scaled),
     ]
 
@@ -614,116 +663,95 @@ def _log_grid_cell_dimensions(vol0: list, cell_dims: list) -> None:
 
 def _check_grid_dimensions(
     roff_file: str,
-    grid_file: str,
-    nx: int,
-    ny: int,
-    nz: int,
+    grid: xtgeo.Grid,
 ) -> None:
-    grid_shape = (nx, ny, nz)
     roff_grid = xtgeo.gridproperty_from_file(roff_file)
     roff_shape = roff_grid.values.shape
-    if roff_shape != grid_shape:
+    if roff_shape != grid.dimensions:
         err = f"Inconsistent grid dimensions {roff_shape} from file {roff_file}"
-        err += f" and {grid_shape} from file {grid_file}."
+        err += f" and {grid.dimensions} from file {grid.filesrc}."
         raise ValueError(format_error(err))
 
 
 def _process_zones(
     zone_info: ZoneInfo,
-    grid: Grid,
-    grid_file: str,
-    global_active_idx: np.ndarray,
+    grid: xtgeo.Grid,
+    active_cells: np.ndarray,
 ) -> Optional[np.ndarray]:
     zone = None
     if zone_info.source is None:
         logging.info("No zone info specified")
+        return None
+    logging.info("Using zone info")
+    if zone_info.zranges is not None:
+        zone_array = np.zeros(
+            grid.dimensions, dtype=int
+        )
+        zonevals = [int(x) for x in range(len(zone_info.zranges))]
+        zone_info.int_to_zone = [f"Zone_{x}" for x in range(len(zonevals))]
+        for zv, zr, zn in zip(
+            zonevals,
+            list(zone_info.zranges.values()),
+            zone_info.zranges.keys(),
+        ):
+            zone_array[:, :, zr[0] - 1 : zr[1]] = zv
+            zone_info.int_to_zone[zv] = zn
+        return zone_array[active_cells]
     else:
-        logging.info("Using zone info")
-        if zone_info.zranges is not None:
-            zone_array = np.zeros(
-                (grid.get_nx(), grid.get_ny(), grid.get_nz()), dtype=int
+        _check_grid_dimensions(zone_info.source, grid)
+        zone = xtgeo.gridproperty_from_file(zone_info.source, grid=grid)
+        try:
+            zone_name_dict = zone.codes
+            zone_values = list(zone_name_dict.keys())
+        except AttributeError:
+            zone_name_dict = {}
+            zone_values = []
+        zonevals = list(np.unique(zone.values[~zone.values.mask]))
+        intvals = np.array(zonevals, dtype=int)
+        if np.sum(intvals == zonevals) != len(zonevals):
+            warning_text = (
+                "Warning: Grid provided in zone file contains non-integer values. "
+                "This might cause problems with the calculations for "
+                "containment in different zones."
             )
-            zonevals = [int(x) for x in range(len(zone_info.zranges))]
-            zone_info.int_to_zone = [f"Zone_{x}" for x in range(len(zonevals))]
-            for zv, zr, zn in zip(
-                zonevals,
-                list(zone_info.zranges.values()),
-                zone_info.zranges.keys(),
-            ):
-                zone_array[:, :, zr[0] - 1 : zr[1]] = zv
-                zone_info.int_to_zone[zv] = zn
-            zone = zone_array.flatten(order="F")[global_active_idx]
-        else:
-            xtg_grid = xtgeo.grid_from_file(grid_file)
-            _check_grid_dimensions(
-                zone_info.source,
-                grid_file,
-                xtg_grid.ncol,
-                xtg_grid.nrow,
-                xtg_grid.nlay,
-            )
-            zone = xtgeo.gridproperty_from_file(zone_info.source, grid=xtg_grid)
-            try:
-                zone_name_dict = zone.codes
-                zone_values = list(zone_name_dict.keys())
-            except AttributeError:
-                zone_name_dict = {}
-                zone_values = []
-            zone = zone.values.data.flatten(order="F")
-            zonevals = list(np.unique(zone))
-            intvals = np.array(zonevals, dtype=int)
-            if np.sum(intvals == zonevals) != len(zonevals):
-                warning_text = (
-                    "Warning: Grid provided in zone file contains non-integer values. "
-                    "This might cause problems with the calculations for "
-                    "containment in different zones."
-                )
-                logging.info(format_warning(warning_text))
-            zone_info.int_to_zone = [None] * (np.max(intvals) + 1)
-            for zv in intvals:
-                if zv >= 0:
-                    if zv in zone_values:
-                        zone_info.int_to_zone[zv] = zone_name_dict[zv]
-                    else:
-                        zone_info.int_to_zone[zv] = f"Zone_{zv}"
-                        logging.info(
-                            f"Value {zv} in roff-grid not found in Codes."
-                            f" Using generic zone name Zone_{zv}."
-                        )
+            logging.info(format_warning(warning_text))
+        zone_info.int_to_zone = [None] * (np.max(intvals) + 1)
+        for zv in intvals:
+            if zv >= 0:
+                if zv in zone_values:
+                    zone_info.int_to_zone[zv] = zone_name_dict[zv]
                 else:
-                    logging.info("Ignoring negative value in grid from zone file.")
-            zone = np.array(zone[global_active_idx], dtype=int)
-    return zone
+                    zone_info.int_to_zone[zv] = f"Zone_{zv}"
+                    logging.info(
+                        f"Value {zv} in roff-grid not found in Codes."
+                        f" Using generic zone name Zone_{zv}."
+                    )
+            else:
+                logging.info("Ignoring negative value in grid from zone file.")
+        return zone.values.data[active_cells]
 
 
 def _process_regions(
     region_info: RegionInfo,
-    grid: Grid,
-    grid_file: str,
-    init: Optional[ResdataFile],
+    grid: xtgeo.Grid,
+    init: xtgeo.GridProperties | None,
     active: np.ndarray,
-    gasless: np.ndarray,
 ) -> Optional[np.ndarray]:
     region = None
     if region_info.source is not None:
         logging.info("Using regions info")
-        xtg_grid = xtgeo.grid_from_file(grid_file)
         _check_grid_dimensions(
             region_info.source,
-            grid_file,
-            xtg_grid.ncol,
-            xtg_grid.nrow,
-            xtg_grid.nlay,
+            grid,
         )
-        region = xtgeo.gridproperty_from_file(region_info.source, grid=xtg_grid)
+        region = xtgeo.gridproperty_from_file(region_info.source, grid=grid)
         try:
             region_name_dict = region.codes
             region_values = list(region_name_dict.keys())
         except AttributeError:
             region_name_dict = {}
             region_values = []
-        region = region.values.data.flatten(order="F")
-        regvals = np.unique(region)
+        regvals = np.unique(region.values.data[~region.values.mask])
         intvals = np.array(regvals, dtype=int)
         if np.sum(intvals == regvals) != len(regvals):
             warning_text = (
@@ -745,7 +773,7 @@ def _process_regions(
                     )
             else:
                 logging.info("Ignoring negative value in grid from region file.")
-        region = np.array(region[active[~gasless]], dtype=int)
+        return np.array(region[active], dtype=int)
     elif region_info.property_name is not None:
         if init is None:
             logging.info("No INIT-file to use for region information.")
@@ -757,9 +785,16 @@ def _process_regions(
                     f"Try reading region information ({region_info.property_name}"
                     f" property) from INIT-file."
                 )
-                region = np.array(init[region_info.property_name][0], dtype=int)
-                if region.shape[0] == grid.get_nx() * grid.get_ny() * grid.get_nz():
-                    region = region[active]
+                region_prop = init.get_prop_by_name(region_info.property_name)
+                if region_prop is None or region_prop.dimensions != grid.dimensions:
+                    logging.info(
+                        "Warning: Failed to use region property in INIT-file has due"
+                        " to either different dimensions or a missing property."
+                    )
+                    region_info.int_to_region = None
+                    return None
+
+                region = region_prop.values[active]
                 regvals = np.unique(region)
                 region_info.int_to_region = [None] * (np.max(regvals) + 1)
                 for rv in regvals:
@@ -770,7 +805,6 @@ def _process_regions(
                             f"Ignoring negative value in {region_info.property_name}."
                         )
                 logging.info("Region information successfully read from INIT-file")
-                region = region[~gasless]
             except KeyError:
                 logging.info(
                     format_warning("Region information not found in INIT-file.")
@@ -1575,6 +1609,7 @@ def _calc_co2_amount(
     co2_mass_output = Co2Data(
         source_data.x_coord,
         source_data.y_coord,
+        source_data.active_cells,
         [
             Co2DataAtTimeStep(
                 key,
@@ -1633,6 +1668,7 @@ def _calc_co2_amount(
         co2_amount = Co2Data(
             source_data.x_coord,
             source_data.y_coord,
+            source_data.active_cells,
             [
                 Co2DataAtTimeStep(
                     t,
@@ -1792,6 +1828,7 @@ def _calc_co2_amount_cell_volume(
     co2_amount = Co2Data(
         source_data.x_coord,
         source_data.y_coord,
+        source_data.active_cells,
         [
             Co2DataAtTimeStep(
                 t,

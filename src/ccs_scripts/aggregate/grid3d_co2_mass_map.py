@@ -75,7 +75,6 @@ def generate_co2_mass_maps(config_: RootConfig):
             grid_file,
             co2_mass_settings,
             grid_folder,
-            properties_to_extract,
         )
 
         co2_mass_property_to_map(

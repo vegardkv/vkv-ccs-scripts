@@ -39,6 +39,7 @@ def _simple_cube_grid():
     return SourceData(
         m_x.flatten(),
         m_y.flatten(),
+        active_cells=np.ones(dims, dtype=bool),
         PORV={date: np.ones(size) * 0.3 for date in dates},
         VOL={date: np.ones(size) * (8 / size) for date in dates},
         DATES=dates,
@@ -76,6 +77,7 @@ def _simple_cube_grid_eclipse():
     return SourceData(
         m_x.flatten(),
         m_y.flatten(),
+        active_cells=np.ones(dims, dtype=bool),
         RPORV={date: np.ones(size) * 0.3 for date in dates},
         VOL={date: np.ones(size) * (8 / size) for date in dates},
         DATES=dates,
