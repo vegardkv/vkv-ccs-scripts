@@ -1,7 +1,7 @@
-import copy
 import os
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple, TypedDict, Union
+from typing import Dict, List, Optional, Tuple, TypedDict, Union
 
 import numpy as np
 import xtgeo
@@ -26,6 +26,18 @@ from ccs_scripts.utils.utils import (
 CO2_MASS_PNAME = "CO2Mass"
 
 # pylint: disable=invalid-name,too-many-instance-attributes
+
+# A single keyword entry as written to UNRST / EGRID files: (keyword_name, data).
+_KwData = Union[List[np.int32], np.ndarray]
+_Keyword = Tuple[str, _KwData]
+
+
+@dataclass
+class _MassData:
+    unrst_path: List[str] = field(default_factory=list)
+    unrst_kw: List[_Keyword] = field(default_factory=list)
+    egrid_path: List[str] = field(default_factory=list)
+    egrid_kw: List[_Keyword] = field(default_factory=list)
 
 
 class MapName(Enum):
@@ -71,16 +83,16 @@ def _get_gasless(properties: Dict[str, Dict[str, np.ndarray]]) -> np.ndarray:
 
 
 def _append_mass_step(
-    mass_data: Dict[str, List[Any]],
+    mass_data: _MassData,
     seqnum: np.int32,
     intehead: np.ndarray,
     logihead: np.ndarray,
     kw_name: str,
     grid_output: PropertyGridOutput,
-    custom_egrid: List,
+    custom_egrid: List[_Keyword],
 ) -> None:
     """Append one report-step's keywords to a mass_data accumulator."""
-    mass_data["unrst_kw"].extend(
+    mass_data.unrst_kw.extend(
         [
             ("SEQNUM  ", [seqnum]),
             ("INTEHEAD", intehead),
@@ -88,10 +100,10 @@ def _append_mass_step(
             (kw_name, grid_output["data"]),
         ]
     )
-    if grid_output["unrst_path"] not in mass_data["unrst_path"]:
-        mass_data["unrst_path"].append(grid_output["unrst_path"])
-        mass_data["egrid_path"].append(grid_output["egrid_path"])
-        mass_data["egrid_kw"].extend(custom_egrid)
+    if grid_output["unrst_path"] not in mass_data.unrst_path:
+        mass_data.unrst_path.append(grid_output["unrst_path"])
+        mass_data.egrid_path.append(grid_output["egrid_path"])
+        mass_data.egrid_kw.extend(custom_egrid)
 
 
 def translate_co2data_to_property(
@@ -127,18 +139,12 @@ def translate_co2data_to_property(
         maps = [maps]
     maps = [map_name.lower() for map_name in maps]
 
-    mass_data_template: Dict[str, List[Any]] = {
-        "unrst_path": [],
-        "unrst_kw": [],
-        "egrid_path": [],
-        "egrid_kw": [],
-    }
-    total_mass_data = copy.deepcopy(mass_data_template)
-    dissolved_water_mass_data = copy.deepcopy(mass_data_template)
-    dissolved_oil_mass_data = copy.deepcopy(mass_data_template)
-    free_mass_data = copy.deepcopy(mass_data_template)
-    free_gas_mass_data = copy.deepcopy(mass_data_template)
-    trapped_gas_mass_data = copy.deepcopy(mass_data_template)
+    total_mass_data = _MassData()
+    dissolved_water_mass_data = _MassData()
+    dissolved_oil_mass_data = _MassData()
+    free_mass_data = _MassData()
+    free_gas_mass_data = _MassData()
+    trapped_gas_mass_data = _MassData()
 
     unrst_data = ResdataFile(co2_mass_settings.unrst_source)
     grid_data = ResdataFile(grid_file)
@@ -236,7 +242,7 @@ def translate_co2data_to_property(
 
 def _create_custom_egrid_kw(
     grid_data: ResdataFile,
-) -> List[Tuple[str, Union[List[int], np.ndarray]]]:
+) -> List[_Keyword]:
     """
     Create the custom list of keywords to export the EGRID file for
     each co2_mass property
@@ -280,26 +286,25 @@ def _create_custom_egrid_kw(
     return custom_egrid
 
 
-def _export_unrst_and_kw_data(mass_data: Dict[str, List[Any]]) -> Optional[str]:
+def _export_unrst_and_kw_data(mass_data: _MassData) -> Optional[str]:
     """
     Exports the grid with the property at different time steps as well as
     the path where the file is located
 
     Args:
-        mass_data (Dict[str,List[Any]]): A dict with
-        the information that feeds the 3d grid properties
+        mass_data (_MassData): Accumulated mass data for one CO2 phase.
 
         Returns:
              Optional[str]
     """
-    if len(mass_data["unrst_path"]) > 0:
-        outfile_wrapper = FileWrapper(mass_data["unrst_path"][0], mode="rb")
+    if len(mass_data.unrst_path) > 0:
+        outfile_wrapper = FileWrapper(mass_data.unrst_path[0], mode="rb")
         with open(outfile_wrapper.file, "wb") as stream:
-            unformatted_write(stream, mass_data["unrst_kw"])
-        grid_outfile_wrapper = FileWrapper(mass_data["egrid_path"][0], mode="rb")
+            unformatted_write(stream, mass_data.unrst_kw)
+        grid_outfile_wrapper = FileWrapper(mass_data.egrid_path[0], mode="rb")
         with open(grid_outfile_wrapper.file, "wb") as stream:
-            unformatted_write(stream, mass_data["egrid_kw"])
-        return mass_data["unrst_path"][0]
+            unformatted_write(stream, mass_data.egrid_kw)
+        return mass_data.unrst_path[0]
     else:
         return None
 
