@@ -1,7 +1,5 @@
 import os
-from dataclasses import make_dataclass
 from pathlib import Path
-from typing import Dict, Optional
 
 import numpy as np
 import pandas
@@ -11,8 +9,8 @@ import shapely.geometry
 from ccs_scripts.co2_containment.co2_calculation import (
     CalculationType,
     Co2Data,
+    SourceData,
     _calculate_co2_data_from_source_data,
-    source_data_,
 )
 from ccs_scripts.co2_containment.co2_containment import main
 
@@ -38,7 +36,6 @@ def _simple_cube_grid():
             np.exp(-3 * (dists.flatten() / ((count + 1) / len(dates))) ** 2) - 0.05, 0.0
         )
     size = np.prod(dims)
-    SourceData = make_dataclass("SourceData", source_data_)
     return SourceData(
         m_x.flatten(),
         m_y.flatten(),
@@ -76,14 +73,6 @@ def _simple_cube_grid_eclipse():
             np.exp(-3 * (dists.flatten() / ((count + 1) / len(dates))) ** 2) - 0.05, 0.0
         )
     size = np.prod(dims)
-    fields_to_add = source_data_.copy()
-    fields_to_add.extend(
-        [
-            ("XMF2", Optional[Dict[str, np.ndarray]], None),
-            ("YMF2", Optional[Dict[str, np.ndarray]], None),
-        ]
-    )
-    SourceData = make_dataclass("SourceData", fields_to_add)
     return SourceData(
         m_x.flatten(),
         m_y.flatten(),
@@ -94,11 +83,11 @@ def _simple_cube_grid_eclipse():
         SWAT={date: 1 - value for date, value in gas_saturations.items()},
         SGAS=gas_saturations,
         BGAS={date: np.ones(size) * 100.0 for date in dates},
-        XMF2={
+        xmfs={2: {
             date: np.ones(size) * 0.02 * value
             for date, value in gas_saturations.items()
-        },
-        YMF2={date: np.ones(size) * 0.99 for date in dates},
+        }},
+        ymfs={2: {date: np.ones(size) * 0.99 for date in dates}},
     )
 
 

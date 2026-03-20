@@ -24,7 +24,6 @@ from ccs_scripts.co2_containment.co2_calculation import (
     ZoneInfo,
     _detect_eclipse_mole_fraction_props,
     calculate_co2,
-    source_data_,
 )
 from ccs_scripts.utils.timer import Timer
 from ccs_scripts.utils.utils import format_error, format_warning
@@ -68,9 +67,8 @@ def generate_co2_mass_maps(config_: RootConfig):
     grid_folder, delete_tmp_grid_folder = _process_grid_dir(config_.output.gridfolder)
     try:
         properties_to_extract = copy.deepcopy(RELEVANT_PROPERTIES)
-        current_source_data = copy.deepcopy(source_data_)
         _, properties_to_extract = _detect_eclipse_mole_fraction_props(
-            co2_mass_settings.unrst_source, properties_to_extract, current_source_data
+            co2_mass_settings.unrst_source, properties_to_extract
         )
         out_property_list = translate_co2data_to_property(
             co2_data,

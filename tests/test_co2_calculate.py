@@ -1,4 +1,3 @@
-from dataclasses import make_dataclass
 from pathlib import Path
 from typing import Tuple
 
@@ -12,10 +11,10 @@ from ccs_scripts.co2_containment.co2_calculation import (
     RELEVANT_PROPERTIES,
     CalculationType,
     RegionInfo,
+    SourceData,
     ZoneInfo,
     _calculate_co2_data_from_source_data,
     _extract_source_data,
-    source_data_,
 )
 from ccs_scripts.co2_containment.co2_containment import (
     calculate_from_co2_data,
@@ -74,8 +73,6 @@ def _get_dummy_co2_masses():
     rng = np.random.RandomState(123)
     x_coord, y_coord, vol = _xy_and_volume(dummy_co2_grid)
     dates = [str(2020 + i) for i in range(n_time_steps)]
-    fields_to_add = source_data_.copy()
-    SourceData = make_dataclass("SourceData", fields_to_add)
     source_data = SourceData(
         x_coord,
         y_coord,
@@ -269,8 +266,6 @@ def test_reek_grid():
         reek_gridfile.with_suffix(".INIT"), name="PORO", grid=grid
     ).values1d.compressed()
     x_coord, y_coord, vol = _xy_and_volume(grid)
-    fields_to_add = source_data_.copy()
-    SourceData = make_dataclass("SourceData", fields_to_add)
     source_data = SourceData(
         x_coord,
         y_coord,
@@ -331,8 +326,6 @@ def test_reek_grid():
     for c, p, amount in zip(cs, ps, amounts2):
         assert extract_amount(table2, c, p, 0) == pytest.approx(amount)
 
-    fields_to_add = source_data_.copy()
-    SourceData = make_dataclass("SourceData", fields_to_add)
     source_data_with_trapping = SourceData(
         x_coord,
         y_coord,
@@ -443,7 +436,8 @@ def test_reek_grid_extract_source_data():
         _extract_source_data(
             str(reek_gridfile),
             str(reek_unrstfile),
-            source_data_,
+            [],
+            False,
             RELEVANT_PROPERTIES,
             zone_info,
             region_info,
