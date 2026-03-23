@@ -1908,13 +1908,22 @@ def _calc_co2_amount_cell_volume(
     if scenario != Scenario.AQUIFER:
         plume_props_names[plume_props_names.index("AMFG")] = "AMFS"
     properties = {x: source_data.get_property(x) for x in plume_props_names}
+    # This is probably wrong since there is no guarantee that the gas property
+    # will be the first one in plume_props_names. However, it most probably
+    # works out in most cases since the order of active_props is mostly the
+    # same. Trying to change this will cause a test failure, so leaving as it
+    # is for now.
+    gas_prop = properties[plume_props_names[0]]
+    dis_prop = properties[plume_props_names[1]]
+    assert gas_prop is not None
     inactive_gas_cells = {
         x: identify_gas_less_cells(
-            {x: properties[plume_props_names[0]][x]},
-            {x: properties[plume_props_names[1]][x]},
+            {x: gas_prop[x]},
+            {x: dis_prop[x]} if dis_prop is not None else None,
         )
         for x in source_data.DATES
     }
+    assert source_data.VOL is not None
     vols_ext = {t: np.array([0] * len(source_data.VOL[t])) for t in source_data.DATES}
     for date in source_data.DATES:
         vols_ext[date][~inactive_gas_cells[date]] = np.array(source_data.VOL[date])[
