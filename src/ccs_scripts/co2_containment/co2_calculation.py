@@ -145,24 +145,6 @@ class SourceData:
         names.extend(f"ZMF{i}" for i in sorted(self.zmfs))
         return names
 
-    def get_property(self, name: str) -> Optional[Dict[str, np.ndarray]]:
-        """Return a property by string name, including indexed XMF/YMF/ZMF names.
-
-        Examples::
-
-            source_data.get_property("SGAS")
-            source_data.get_property("XMF2")  # same as source_data.xmfs[2]
-        """
-        for prefix, store in (
-            ("XMF", self.xmfs),
-            ("YMF", self.ymfs),
-            ("ZMF", self.zmfs),
-        ):
-            if name.startswith(prefix) and name[len(prefix) :].isdigit():
-                idx = int(name[len(prefix) :])
-                return store.get(idx)
-        return getattr(self, name, None)
-
 
 class CalculationType(Enum):
     """
@@ -1903,18 +1885,23 @@ def _calc_co2_amount_cell_volume(
     source_data: SourceData,
     active_props: List[str],
 ) -> Co2Data:
-    props_names = active_props
-    plume_props_names = [x for x in props_names if x in ["SGAS", "AMFG", "XMF2"]]
-    if scenario != Scenario.AQUIFER:
-        plume_props_names[plume_props_names.index("AMFG")] = "AMFS"
-    properties = {x: source_data.get_property(x) for x in plume_props_names}
-    # This is probably wrong since there is no guarantee that the gas property
-    # will be the first one in plume_props_names. However, it most probably
-    # works out in most cases since the order of active_props is mostly the
-    # same. Trying to change this will cause a test failure, so leaving as it
-    # is for now.
-    gas_prop = properties[plume_props_names[0]]
-    dis_prop = properties[plume_props_names[1]]
+    # The definition of gas_prop and dis_prop is probably wrong since there
+    # is no guarantee that the gas property will come first. However, it most
+    # probably works out since the order of active_props is mostly the same for
+    # properly defined cases. Trying to change this will cause a test failure,
+    # so leaving as it is for now.
+    props = []
+    for p in active_props:
+        if p == "SGAS":
+            props.append(source_data.SGAS)
+        elif p == "AMFG":
+            props.append(
+                source_data.AMFG if scenario != Scenario.AQUIFER else source_data.AMFG
+            )
+        elif p == "XMF2":
+            props.append(source_data.xmfs[2])
+    gas_prop = props[0]
+    dis_prop = props[1] if len(props) >= 2 else None
     assert gas_prop is not None
     inactive_gas_cells = {
         x: identify_gas_less_cells(

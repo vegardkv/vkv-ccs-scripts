@@ -1,7 +1,6 @@
-from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import List, Tuple, TypedDict, Union
+from typing import List, TypedDict
 
 import numpy as np
 import xtgeo
@@ -13,26 +12,10 @@ from ccs_scripts.co2_containment.co2_calculation import (
     Scenario,
 )
 from ccs_scripts.utils.timer import Timer
-from ccs_scripts.utils.utils import (
-    format_error,
-    identify_gas_less_cells_from_iterator,
-)
 
 CO2_MASS_PNAME = "CO2Mass"
 
 # pylint: disable=invalid-name,too-many-instance-attributes
-
-# A single keyword entry as written to UNRST / EGRID files: (keyword_name, data).
-_KwData = Union[List[np.int32], np.ndarray]
-_Keyword = Tuple[str, _KwData]
-
-
-@dataclass
-class _MassData:
-    unrst_path: List[str] = field(default_factory=list)
-    unrst_kw: List[_Keyword] = field(default_factory=list)
-    egrid_path: List[str] = field(default_factory=list)
-    egrid_kw: List[_Keyword] = field(default_factory=list)
 
 
 class MapName(Enum):
@@ -49,55 +32,6 @@ class PropertyGridOutput(TypedDict):
     data: np.ndarray
     unrst_path: str
     egrid_path: str
-
-
-def _get_gasless(properties: xtgeo.GridProperties) -> np.ndarray:
-    """
-    Identifies global index for grid cells without CO2 based on Gas Saturation (SGAS)
-    and Mole Fraction of Gas in dissolved phase (AMFG/XMF2)
-
-    Args:
-        properties (Dict) : Properties that will be used to compute CO2 mass
-
-    Returns:
-        np.ndarray
-    """
-    dissolved_prop = [d for d in ["AMFS", "AMFG", "XMF2"] if d in properties.names]
-    if len(dissolved_prop) == 0 or "SGAS" not in properties.names:
-        error_text = (
-            "CO2 containment calculation failed. "
-            "Cannot find required properties SGAS+AMFG, SGAS+XMF2 or SGAS+AMFS"
-        )
-        raise RuntimeError(format_error(error_text))
-
-    return identify_gas_less_cells_from_iterator(
-        (p.values for p in properties if p.name.startswith("SGAS")),
-        (p.values for p in properties if p.name.startswith(dissolved_prop[0])),
-    )
-
-
-def _append_mass_step(
-    mass_data: _MassData,
-    seqnum: np.int32,
-    intehead: np.ndarray,
-    logihead: np.ndarray,
-    kw_name: str,
-    grid_output: PropertyGridOutput,
-    custom_egrid: List[_Keyword],
-) -> None:
-    """Append one report-step's keywords to a mass_data accumulator."""
-    mass_data.unrst_kw.extend(
-        [
-            ("SEQNUM  ", [seqnum]),
-            ("INTEHEAD", intehead),
-            ("LOGIHEAD", logihead),
-            (kw_name, grid_output["data"]),
-        ]
-    )
-    if grid_output["unrst_path"] not in mass_data.unrst_path:
-        mass_data.unrst_path.append(grid_output["unrst_path"])
-        mass_data.egrid_path.append(grid_output["egrid_path"])
-        mass_data.egrid_kw.extend(custom_egrid)
 
 
 def translate_co2data_to_property(
