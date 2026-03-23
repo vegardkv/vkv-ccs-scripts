@@ -1,14 +1,10 @@
-import os
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Dict, List, Literal, Optional, Tuple, TypedDict, Union
+from typing import List, Tuple, TypedDict, Union
 
 import numpy as np
 import xtgeo
-from resdata.resfile import ResdataFile
-from resfo._unformatted.write import unformatted_write
-from xtgeo.io._file import FileWrapper
 
 from ccs_scripts.aggregate._config import CO2MassSettings
 from ccs_scripts.co2_containment.co2_calculation import (
@@ -18,11 +14,8 @@ from ccs_scripts.co2_containment.co2_calculation import (
 )
 from ccs_scripts.utils.timer import Timer
 from ccs_scripts.utils.utils import (
-    fetch_properties,
     format_error,
-    identify_gas_less_cells,
     identify_gas_less_cells_from_iterator,
-    is_subset,
 )
 
 CO2_MASS_PNAME = "CO2Mass"
@@ -112,7 +105,7 @@ def translate_co2data_to_property(
     grid_file: str,
     co2_mass_settings: CO2MassSettings,
     grid_out_dir: str,
-) -> List[Optional[str]]:
+) -> List[str]:
     """
     Convert CO2 data into 3D GridProperty
 
@@ -123,10 +116,9 @@ def translate_co2data_to_property(
         co2_mass_settings (CO2MassSettings): Settings from config file for calculation
                                              of CO2 mass maps.
         grid_out_dir (str): Path to store the produced 3D GridProperties.
-        properties_to_extract (List): Names of the properties to be extracted
 
     Returns:
-        List[List[xtgeo.GridProperty]]
+        List[str]: List of paths to the produced 3D GridProperties.
 
     """
     timer = Timer()
@@ -178,92 +170,6 @@ def translate_co2data_to_property(
     return prop_paths
 
 
-def _create_custom_egrid_kw(
-    grid_data: ResdataFile,
-) -> List[_Keyword]:
-    """
-    Create the custom list of keywords to export the EGRID file for
-    each co2_mass property
-    """
-    kw_sequence = [
-        "FILEHEAD",
-        "GRIDUNIT",
-        "GDORIENT",
-        "GRIDHEAD",
-        "COORD   ",
-        "ZCORN   ",
-        "ACTNUM  ",
-        "ENDGRID ",
-        "NNCHEAD ",
-        "NNC1    ",
-        "NNC2    ",
-    ]
-    mandatory_kws = [
-        "FILEHEAD",
-        "GRIDUNIT",
-        "GRIDHEAD",
-        "COORD   ",
-        "ZCORN   ",
-        "ENDGRID ",
-    ]
-    custom_egrid = []
-    for kw in kw_sequence:
-        try:
-            val = grid_data[kw.rstrip()][0].numpyView()
-            custom_egrid.append((kw, val))
-        except (AttributeError, ValueError, KeyError):
-            try:
-                val = grid_data[kw.rstrip()][0]
-                custom_egrid.append((kw, val))
-            except KeyError as err:
-                if kw in mandatory_kws:
-                    raise KeyError(
-                        format_error(f"Mandatory key '{kw}' is missing in grid_data")
-                    ) from err
-                pass
-    return custom_egrid
-
-
-def _export_unrst_and_kw_data(mass_data: _MassData) -> Optional[str]:
-    """
-    Exports the grid with the property at different time steps as well as
-    the path where the file is located
-
-    Args:
-        mass_data (_MassData): Accumulated mass data for one CO2 phase.
-
-        Returns:
-             Optional[str]
-    """
-    if len(mass_data.unrst_path) > 0:
-        outfile_wrapper = FileWrapper(mass_data.unrst_path[0], mode="rb")
-        with open(outfile_wrapper.file, "wb") as stream:
-            unformatted_write(stream, mass_data.unrst_kw)
-        grid_outfile_wrapper = FileWrapper(mass_data.egrid_path[0], mode="rb")
-        with open(grid_outfile_wrapper.file, "wb") as stream:
-            unformatted_write(stream, mass_data.egrid_kw)
-        return mass_data.unrst_path[0]
-    else:
-        return None
-
-
-def _get_gas_idxs(unrst_file: str) -> np.ndarray:
-    """
-    Gets the global index of cells with CO2
-
-    Args:
-        unrst_file (str): Path to UNRST-file
-        properties_to_extract (List): Names of the properties to be extracted
-
-    Returns:
-        np.ndarray
-
-    """
-    props = xtgeo.gridproperties_from_file(unrst_file)
-    gasless = _get_gasless(props)
-    return gasless
-
-
 def _convert_to_grid(
     co2_at_date: Co2DataAtTimeStep,
     grid: xtgeo.Grid,
@@ -290,7 +196,8 @@ def _convert_to_grid(
         return prop
 
     props = {
-        m: _create_prop(m, mass) for m, mass in [
+        m: _create_prop(m, mass)
+        for m, mass in [
             (MapName.MASS_TOT, co2_at_date.total_mass()),
             (MapName.MASSDISW, co2_at_date.dis_water_phase),
             (MapName.MASSDISO, co2_at_date.dis_oil_phase),
