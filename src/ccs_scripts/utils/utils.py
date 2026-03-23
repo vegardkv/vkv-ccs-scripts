@@ -20,25 +20,6 @@ def format_error(txt: Union[str, Exception]) -> str:
     return f"\x1b[37;41m\x1b[1m{txt}\x1b[0m"
 
 
-def try_prop(unrst: ResdataFile, prop_name: str):
-    """
-    Function to determine if a property (prop_name) is part of a ResdataFile (unrst)
-
-    Args:
-      unrst (ResdataFile): ResdataFile to fetch property names from
-      prop_name (str): The property name to be searched in unrst
-
-    Returns:
-      str if prop_names exists in unrst, None otherwise
-
-    """
-    try:
-        prop = unrst[prop_name]
-    except KeyError:
-        prop = None
-    return prop
-
-
 def log_saturation_summaries(props: Dict) -> None:
     sgas = props["SGAS"]
     swat = props["SWAT"]

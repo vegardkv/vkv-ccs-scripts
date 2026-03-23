@@ -142,17 +142,9 @@ def translate_co2data_to_property(
     store_all = "all" in maps or len(maps) == 0
 
     final_props: list[xtgeo.GridProperty] = []
-    maps_to_generate = [MapName(m) for m in maps] if not store_all else [
-        MapName.MASS_TOT,
-        MapName.MASSDISW,
-        MapName.MASSDISO,
-        MapName.MASS_GAS,
-        MapName.MASSTGAS,
-        MapName.MASSFGAS,
-    ]
     for co2_at_date in co2_data.data_list:
         tmp_props: dict[MapName, xtgeo.GridProperty] = _convert_to_grid(
-            co2_at_date, grid, co2_data.active_cells, maps_to_generate
+            co2_at_date, grid, co2_data.active_cells
         )
         if store_all or "total_co2" in maps:
             final_props.append(tmp_props[MapName.MASS_TOT])

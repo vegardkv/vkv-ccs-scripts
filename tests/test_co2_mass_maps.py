@@ -27,10 +27,29 @@ def adapt_reek_grid_for_co2_mass_map_test():
     DGAS = []
     DWAT = []
     for x in SGAS:
-        AMFG.append(x.copy())
-        YMFG.append(x.copy())
-        DGAS.append(x.copy())
-        DWAT.append(x.copy())
+        amfg = x.copy()
+        amfg.name = "AMFG"
+        amfg.numpy_view()[:] *= 0.02
+        AMFG.append(amfg)
+
+        ymfg = x.copy()
+        ymfg.name = "YMFG"
+        ymfg.numpy_view()[:] = 0.99
+        YMFG.append(ymfg)
+
+        dgas = x.copy()
+        dgas.name = "DGAS"
+        dgas.numpy_view()[:] = 100
+        DGAS.append(dgas)
+
+        dwat = x.copy()
+        dwat.name = "DWAT"
+        dwat.numpy_view()[:] = 1000
+        DWAT.append(dwat)
+
+    # The auxilliary properties needs to be written to the correct seqnum section
+    # of the file, so we re-write the entire unrst file, and inject the properties
+    # at the correct place.
     new_unrst_file = str(
         Path(__file__).absolute().parent
         / "data"
@@ -39,32 +58,17 @@ def adapt_reek_grid_for_co2_mass_map_test():
         / "model"
         / "2_R001_REEK-0-mass-maps.UNRST"
     )
-    shutil.copy(str(reek_unrstfile), new_unrst_file)
-    with openFortIO(new_unrst_file, mode=FortIO.APPEND_MODE) as f:
-        for y in AMFG:
-            y.name = "AMFG"
-            a = y.numpy_view()
-            for i in range(0, len(a)):
-                a[i] = a[i] * 0.02
-            y.fwrite(f)
-        for y in YMFG:
-            y.name = "YMFG"
-            a = y.numpy_view()
-            for i in range(0, len(a)):
-                a[i] = 0.99
-            y.fwrite(f)
-        for y in DGAS:
-            y.name = "DGAS"
-            a = y.numpy_view()
-            for i in range(0, len(a)):
-                a[i] = 100
-            y.fwrite(f)
-        for y in DWAT:
-            y.name = "DWAT"
-            a = y.numpy_view()
-            for i in range(0, len(a)):
-                a[i] = 1000
-            y.fwrite(f)
+    seqnum_count = 0
+    with openFortIO(new_unrst_file, mode=FortIO.WRITE_MODE) as f:
+        for i in range(len(properties)):
+            kw = properties[i]
+            kw.fwrite(f)
+            if kw.name == "SEQNUM":
+                AMFG[seqnum_count].fwrite(f)
+                YMFG[seqnum_count].fwrite(f)
+                DGAS[seqnum_count].fwrite(f)
+                DWAT[seqnum_count].fwrite(f)
+                seqnum_count += 1
 
 
 def test_co2_mass_map_reek_grid():

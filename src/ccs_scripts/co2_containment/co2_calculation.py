@@ -11,22 +11,16 @@ from typing import Dict, List, Literal, Optional, Tuple
 import numpy as np
 import pandas as pd
 import xtgeo
-from resdata.grid import Grid
-from resdata.resfile import ResdataFile
 
 from ccs_scripts.utils.timer import Timer
 from ccs_scripts.utils.utils import (
     THRESHOLD_DISSOLVED,
-    fetch_properties,
-    find_active_and_gasless_cells,
     format_error,
     format_warning,
     identify_gas_less_cells,
     identify_gas_less_cells_from_iterator,
     is_subset,
     log_saturation_summaries,
-    reduce_properties,
-    try_prop,
 )
 
 DEFAULT_CO2_MOLAR_MASS = 44.0
@@ -337,55 +331,49 @@ def _extract_comp_molar_masses(
 
 def _detect_eclipse_mole_fraction_props(
     unrst_file: str,
-    props_to_extract: List,
-) -> Tuple[List, List[int], bool]:
+) -> tuple[list[str], list[int], bool]:
     """
     Detects which and how many components are there in Eclipse data.
 
     Args:
         unrst_file (str): Path to UNRST file
-        props_to_extract (List): List of current properties to extract (mutated in place)
 
     Returns:
-        Tuple of (props_to_extract, component_indices, has_zmf) where
+        Tuple of (mole_frac_props, component_indices, has_zmf) where
         component_indices is a list of 1-based int indices found (e.g. [1, 2, 3])
         and has_zmf indicates whether ZMF properties were present.
     """
-    unrst = ResdataFile(unrst_file)
-    suffix_count = 1
-    has_zmf = True
+    unrst_props = xtgeo.list_gridproperties(unrst_file)
+    has_zmf = "ZMF1" in unrst_props
     component_indices: List[int] = []
-    while suffix_count < 50:
-        tmp_x = try_prop(unrst, "XMF" + str(suffix_count))
-        tmp_y = try_prop(unrst, "YMF" + str(suffix_count))
-        tmp_z = try_prop(unrst, "ZMF" + str(suffix_count))
-        if suffix_count == 1 and tmp_z is None:
-            has_zmf = False
-        if tmp_x is None and tmp_y is None:
+    mole_frac_props = []
+    for suffix_count in range(1, 51):
+        tmp_x = f"XMF{suffix_count}" in unrst_props
+        tmp_y = f"YMF{suffix_count}" in unrst_props
+        tmp_z = f"ZMF{suffix_count}" in unrst_props
+        if not tmp_x and not tmp_y:
+            # Neither XMFi nor YMFi found, assume no more components
             break
         if has_zmf:
-            if (tmp_x is None) != (tmp_y is None) or (tmp_z is None) != (tmp_y is None):
+            if not (tmp_x == tmp_y == tmp_z):
                 error_text = (
                     "Error: Number of components with XMF property differ from "
-                    "the number of components with YMF"
+                    "the number of components with YMF or ZMF"
                 )
                 raise ValueError(format_error(error_text))
-            props_to_extract.extend(
+            mole_frac_props.extend(
                 [name + str(suffix_count) for name in ["XMF", "YMF", "ZMF"]]
             )
         else:
-            if (tmp_x is None) != (tmp_y is None):
+            if not (tmp_x == tmp_y):
                 error_text = (
                     "Error: Number of components with XMF property differ from "
                     "the number of components with YMF"
                 )
                 raise ValueError(format_error(error_text))
-            props_to_extract.extend(
-                [name + str(suffix_count) for name in ["XMF", "YMF"]]
-            )
+            mole_frac_props += [f"XMF{suffix_count}", f"YMF{suffix_count}"]
         component_indices.append(suffix_count)
-        suffix_count += 1
-    return props_to_extract, component_indices, has_zmf
+    return mole_frac_props, component_indices, has_zmf
 
 
 def _n_components(active_props: List):
@@ -489,9 +477,8 @@ def _find_props_to_extract(
 ) -> Tuple[List[str], List[int], bool]:
     """Return (props_to_extract, component_indices, has_zmf)."""
     props_to_extract = copy.deepcopy(RELEVANT_PROPERTIES)
-    props_to_extract, component_indices, has_zmf = _detect_eclipse_mole_fraction_props(
-        unrst_file, props_to_extract
-    )
+    mole_frac_props, component_indices, has_zmf = _detect_eclipse_mole_fraction_props(unrst_file)
+    props_to_extract.extend(mole_frac_props)
     if residual_trapping:
         props_to_extract.extend(["SGSTRAND", "SGTRH"])
     return props_to_extract, component_indices, has_zmf
