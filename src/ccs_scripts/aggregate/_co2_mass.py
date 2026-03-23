@@ -143,6 +143,7 @@ def translate_co2data_to_property(
 
     final_props: list[xtgeo.GridProperty] = []
     for co2_at_date in co2_data.data_list:
+        # TODO: memory-intensive? Could also write to file directly
         tmp_props: dict[MapName, xtgeo.GridProperty] = _convert_to_grid(
             co2_at_date, grid, co2_data.active_cells
         )
