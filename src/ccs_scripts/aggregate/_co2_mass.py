@@ -1,6 +1,6 @@
 from enum import Enum
 from pathlib import Path
-from typing import List, TypedDict
+from typing import List
 
 import numpy as np
 import xtgeo
@@ -26,12 +26,6 @@ class MapName(Enum):
     MASSTGAS = "co2_mass_trapped_gas_phase"
     MASSFGAS = "co2_mass_free_gas_phase"
     MigrationTime_MASS_TOT = "co2_mass_migration_time_total"
-
-
-class PropertyGridOutput(TypedDict):
-    data: np.ndarray
-    unrst_path: str
-    egrid_path: str
 
 
 def translate_co2data_to_property(

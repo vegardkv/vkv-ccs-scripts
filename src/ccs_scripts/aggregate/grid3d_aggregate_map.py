@@ -11,7 +11,6 @@ import xtgeo
 from xtgeo.common import XTGeoDialog
 
 from ccs_scripts.aggregate import _config, _grid_aggregation
-from ccs_scripts.aggregate._co2_mass import MapName
 from ccs_scripts.aggregate._config import (
     AggregationMethod,
     ComputeSettings,
@@ -65,18 +64,6 @@ def _check_input(computesettings: ComputeSettings) -> None:
             " no map is produced"
         )
         raise Exception(format_error(error_text))
-
-
-def modify_mass_property_names(properties: List[xtgeo.GridProperty]):
-    if any("MASS" in p.name for p in properties):  # NBNB-AS: Can remove this check?
-        for p in properties:
-            if "MASS" in p.name:
-                parts = p.name.split("--")
-                mass_prop_name = parts[0]
-                p.name = f"{MapName[mass_prop_name].value}"
-                if len(parts) > 1:
-                    mass_prop_date = parts[1]
-                    p.name += f"--{mass_prop_date}"
 
 
 def _log_grid_info(grid: xtgeo.Grid) -> None:
@@ -162,7 +149,6 @@ def generate_maps(
     timer.stop("extract_properties")
     _log_properties_info(properties)
 
-    # modify_mass_property_names(properties)
     _filters: List[Tuple[str, Optional[Union[np.ndarray, None]]]] = []
     if computesettings.all:
         _filters.append(("all", None))
