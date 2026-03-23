@@ -4,10 +4,10 @@
 import copy
 import datetime
 import logging
+import warnings
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Literal, Optional, Tuple
-import warnings
 
 import numpy as np
 import pandas as pd
@@ -53,6 +53,7 @@ RELEVANT_PROPERTIES = [
     "XMFO",
     "YMFO",
 ]
+
 
 @dataclass
 class SourceData:
@@ -102,9 +103,31 @@ class SourceData:
     # Names of static property fields (excludes coordinates, DATES, zone, region,
     # and the indexed mf dicts — see active_property_names for a full list).
     _STATIC_PROP_FIELDS = [
-        "VOL", "SOIL", "SWAT", "SGAS", "SGSTRAND", "SGTRH", "RPORV", "PORV",
-        "AMFG", "YMFG", "XMFG", "DWAT", "DGAS", "DOIL", "BWAT", "BGAS", "BOIL",
-        "AMFS", "YMFS", "XMFS", "AMFW", "YMFW", "XMFW", "XMFO", "YMFO",
+        "VOL",
+        "SOIL",
+        "SWAT",
+        "SGAS",
+        "SGSTRAND",
+        "SGTRH",
+        "RPORV",
+        "PORV",
+        "AMFG",
+        "YMFG",
+        "XMFG",
+        "DWAT",
+        "DGAS",
+        "DOIL",
+        "BWAT",
+        "BGAS",
+        "BOIL",
+        "AMFS",
+        "YMFS",
+        "XMFS",
+        "AMFW",
+        "YMFW",
+        "XMFW",
+        "XMFO",
+        "YMFO",
     ]
 
     def active_property_names(self) -> List[str]:
@@ -115,8 +138,7 @@ class SourceData:
         and ``_find_source_and_scenario`` work unchanged.
         """
         names: List[str] = [
-            name for name in self._STATIC_PROP_FIELDS
-            if getattr(self, name) is not None
+            name for name in self._STATIC_PROP_FIELDS if getattr(self, name) is not None
         ]
         names.extend(f"XMF{i}" for i in sorted(self.xmfs))
         names.extend(f"YMF{i}" for i in sorted(self.ymfs))
@@ -131,9 +153,13 @@ class SourceData:
             source_data.get_property("SGAS")
             source_data.get_property("XMF2")  # same as source_data.xmfs[2]
         """
-        for prefix, store in (("XMF", self.xmfs), ("YMF", self.ymfs), ("ZMF", self.zmfs)):
-            if name.startswith(prefix) and name[len(prefix):].isdigit():
-                idx = int(name[len(prefix):])
+        for prefix, store in (
+            ("XMF", self.xmfs),
+            ("YMF", self.ymfs),
+            ("ZMF", self.zmfs),
+        ):
+            if name.startswith(prefix) and name[len(prefix) :].isdigit():
+                idx = int(name[len(prefix) :])
                 return store.get(idx)
         return getattr(self, name, None)
 
@@ -459,6 +485,9 @@ def _convert_phase_density_from_mass_to_mole(
     dwat = source_data.DWAT
     dgas = source_data.DGAS
     doil = source_data.DOIL
+    assert dwat is not None
+    assert dgas is not None
+    assert doil is not None
     bwat = {}
     bgas = {}
     boil = {}
@@ -478,7 +507,9 @@ def _find_props_to_extract(
 ) -> Tuple[List[str], List[int], bool]:
     """Return (props_to_extract, component_indices, has_zmf)."""
     props_to_extract = copy.deepcopy(RELEVANT_PROPERTIES)
-    mole_frac_props, component_indices, has_zmf = _detect_eclipse_mole_fraction_props(unrst_file)
+    mole_frac_props, component_indices, has_zmf = _detect_eclipse_mole_fraction_props(
+        unrst_file
+    )
     props_to_extract.extend(mole_frac_props)
     if residual_trapping:
         props_to_extract.extend(["SGSTRAND", "SGTRH"])
@@ -521,8 +552,13 @@ def _extract_source_data(
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
         grid = xtgeo.grid_from_file(grid_file)
-    has_lgr = any("egrid file contains local grid refinements (LGR)" in str(warn.message) for warn in w)
-    unrst_names = [p for p in props_to_extract if p in xtgeo.list_gridproperties(unrst_file)]
+    has_lgr = any(
+        "egrid file contains local grid refinements (LGR)" in str(warn.message)
+        for warn in w
+    )
+    unrst_names = [
+        p for p in props_to_extract if p in xtgeo.list_gridproperties(unrst_file)
+    ]
     unrst = xtgeo.gridproperties_from_file(
         unrst_file, grid=grid, names=unrst_names, dates="all", namestyle=1
     )
@@ -557,12 +593,10 @@ def _extract_source_data(
     # indices. Add assertions everywhere?
     active_cells = grid.actnum_array.astype(bool) & ~gasless
 
-    # dict[property][date] with only active and non-gasless cells, used for all calculations
     dates = unrst.dates
     extracted_names = unrst_names
-    props_reduced: dict[str, dict[str, np.ndarray | None]] = {
-        p: {d: None for d in dates} for p in extracted_names
-    }
+    # dict[property][date] with only active and non-gasless cells
+    props_reduced: dict[str, dict[str, np.ndarray]] = {p: {} for p in extracted_names}
     for prop in unrst.props:
         parts = prop.name.split("--")
         if len(parts) == 1:
@@ -578,7 +612,19 @@ def _extract_source_data(
         # "active_cells" also include gas-less cells, so we'll use that instead
         props_reduced[pname][pdate] = prop.values[active_cells].data
 
-    # TODO: warn about missing dates (i.e. None-values in props_reduced)
+    # Warn about missing data for any dates
+    missing: list[tuple[str, str]] = []
+    for d in dates:
+        for prop in extracted_names:
+            if d not in props_reduced[prop]:
+                missing.append((prop, d))
+    if missing:
+        missing_str = ", ".join([f"{prop} ({d})" for prop, d in missing])
+        logging.info(
+            format_warning(
+                f"WARNING: The following date-property pairs are missing: {missing_str}"
+            )
+        )
 
     log_saturation_summaries(props_reduced)
     # Tuple with (x,y,z) for each cell:
@@ -608,7 +654,7 @@ def _extract_source_data(
                     d: porv.values[active_cells].data for d in dates
                 }
         elif "RPORV" not in props_reduced:
-            # Grids with LGRs will not have a valid PORV values for the cells
+            # Grids with LGRs will not have valid PORV values for the cells
             # affected by LGR. For Cirrus, these cells will have a value of 1.0
             # (we believe), but other simulators are unclear. In any case,
             # we override these values with PORV calculated from PORO and
@@ -623,9 +669,25 @@ def _extract_source_data(
                 porv_proxy = np.where(porv_vals == 1.0, poro_vals * vol, porv_vals)
                 props_reduced["PORV"] = {d: porv_proxy for d in dates}
     # Separate the indexed mole-fraction props from the static ones
-    xmfs = {i: props_reduced.pop(f"XMF{i}") for i in component_indices if f"XMF{i}" in props_reduced}
-    ymfs = {i: props_reduced.pop(f"YMF{i}") for i in component_indices if f"YMF{i}" in props_reduced}
-    zmfs = {i: props_reduced.pop(f"ZMF{i}") for i in component_indices if f"ZMF{i}" in props_reduced} if has_zmf else {}
+    xmfs = {
+        i: props_reduced.pop(f"XMF{i}")
+        for i in component_indices
+        if f"XMF{i}" in props_reduced
+    }
+    ymfs = {
+        i: props_reduced.pop(f"YMF{i}")
+        for i in component_indices
+        if f"YMF{i}" in props_reduced
+    }
+    zmfs = (
+        {
+            i: props_reduced.pop(f"ZMF{i}")
+            for i in component_indices
+            if f"ZMF{i}" in props_reduced
+        }
+        if has_zmf
+        else {}
+    )
     source_data = SourceData(
         cells_x,
         cells_y,
@@ -642,7 +704,9 @@ def _extract_source_data(
     return source_data, cell_size
 
 
-def _log_grid_cell_dimensions(vol0: list, dx: np.ndarray, dy: np.ndarray, dz: np.ndarray) -> None:
+def _log_grid_cell_dimensions(
+    vol0: list, dx: np.ndarray, dy: np.ndarray, dz: np.ndarray
+) -> None:
     vol0_scaled = np.array(vol0) / 1000.0
 
     dimensions = [
@@ -695,9 +759,7 @@ def _process_zones(
         return None
     logging.info("Using zone info")
     if zone_info.zranges is not None:
-        zone_array = np.zeros(
-            grid.dimensions, dtype=int
-        )
+        zone_array = np.zeros(grid.dimensions, dtype=int)
         zonevals = [int(x) for x in range(len(zone_info.zranges))]
         zone_info.int_to_zone = [f"Zone_{x}" for x in range(len(zonevals))]
         for zv, zr, zn in zip(
@@ -927,11 +989,13 @@ def _cirrus_co2mass(
     swat = source_data.SWAT
     xmfo = source_data.XMFO
     if swat is None and scenario != Scenario.DEPLETED_OIL_GAS_FIELD:
+        assert sgas is not None
         # Only gas (co2 or hydrocarbon gas) and water => sgas + swat = 1
         swat = {key: 1 - sgas[key] for key in sgas}
     if xmfw is None and scenario == Scenario.DEPLETED_OIL_GAS_FIELD:
         # Assume g = hydrocarbon gas, s = co2, o = oil
         # => The remainder must be the mole fraction for water
+        assert xmfg is not None and xmfs is not None and xmfo is not None
         xmfw = {key: 1 - xmfg[key] - xmfs[key] - xmfo[key] for key in xmfg}
     sgstrand = source_data.SGSTRAND
     eff_vols = source_data.RPORV if pore_volume_prop == "RPORV" else source_data.PORV
@@ -940,6 +1004,11 @@ def _cirrus_co2mass(
         scenario, amfg, amfs, amfw, ymfg, ymfs, ymfw, xmfs, xmfw, xmfg
     )
 
+    assert eff_vols is not None
+    assert swat is not None
+    assert dwat is not None
+    assert sgas is not None
+    assert dgas is not None
     co2_mass = {}
     for date in dates:
         co2_mass[date] = [
@@ -969,6 +1038,7 @@ def _cirrus_co2mass(
             ),
         ]
         if scenario == Scenario.DEPLETED_OIL_GAS_FIELD:
+            assert doil is not None
             co2_mass[date].extend(
                 [
                     eff_vols[date]
@@ -1026,7 +1096,7 @@ def _compositional_co2mass(
     source: str,
     pore_volume_prop: str,
     co2_molar_mass: Optional[float] = None,
-    co2_position: Optional[float] = None,
+    co2_position: Optional[int] = None,
 ) -> Dict[str, List[np.ndarray]]:
     """
     Calculates CO2 mass based on molar weight and mole fraction of the components
@@ -1061,10 +1131,14 @@ def _compositional_co2mass(
         ymf_co2 = source_data.ymfs[2]
     phase_moles = {}
     co2_mass = {}
+    assert eff_vols is not None
+    assert bgas is not None
+    assert sgas is not None
+    assert bwat is not None
     for date in dates:
         phase_moles[date] = [
             (
-                bwat[date] * swat[date] * eff_vols[date]
+                bwat[date] * swat[date] * eff_vols[date]  # type: ignore[index]
                 if scenario == Scenario.DEPLETED_OIL_GAS_FIELD
                 else bwat[date] * (1 - sgas[date]) * eff_vols[date]
             ),
@@ -1083,6 +1157,8 @@ def _compositional_co2mass(
                 if co2_position is not None and source == "Cirrus COMP"
                 else source_data.zmfs[2]
             )
+            assert boil is not None
+            assert soil is not None
             phase_moles[date].extend([boil[date] * soil[date] * eff_vols[date]])
             total_moles = (
                 phase_moles[date][0] + phase_moles[date][1] + phase_moles[date][2]
@@ -1096,6 +1172,7 @@ def _compositional_co2mass(
                 0, total_co2_mass - co2_mass[date][0] - co2_mass[date][1]
             )
         if any(x is not None for x in (sgstrand, sgtrh)):
+            assert sgtrh is not None
             co2_mass[date].extend(
                 [
                     np.divide(
@@ -1321,7 +1398,7 @@ def _eclipse_co2_molar_volume(
                         -water_molar_mass
                         * (1 - xmf2[date][x])
                         / (1000 * water_density[x])
-                        + 1 / (1000 * bwat[date][x])
+                        + 1 / (1000 * bwat[date][x])  # type: ignore[index]
                     )
                     if xmf2[date][x] >= THRESHOLD_DISSOLVED
                     else 0
@@ -1335,7 +1412,7 @@ def _eclipse_co2_molar_volume(
                         -water_molar_mass
                         * (1 - ymf2[date][x])
                         / (1000 * water_density[x])
-                        + 1 / (1000 * bgas[date][x])
+                        + 1 / (1000 * bgas[date][x])  # type: ignore[index]
                     )
                     if not ymf2[date][x] == 0
                     else 0
@@ -1719,6 +1796,7 @@ def _calculate_molar_vols_co2(
 ):
     if source == "Cirrus":
         y_prop = source_data.AMFG if scenario == Scenario.AQUIFER else source_data.AMFS
+        assert y_prop is not None
         y = y_prop[source_data.DATES[0]]
         where_min_amf_co2 = np.where(y < THRESHOLD_DISSOLVED)[0]
         if len(where_min_amf_co2) == 0:
@@ -1733,6 +1811,7 @@ def _calculate_molar_vols_co2(
             )
             logging.warning(format_warning(msg))
         # Where amfg is 0, or the closest approximation available
+        assert source_data.DWAT is not None
         dwat = source_data.DWAT[source_data.DATES[0]]
         water_density = np.array(
             [
@@ -1744,9 +1823,11 @@ def _calculate_molar_vols_co2(
                 for x in enumerate(dwat)
             ]
         )
+        assert source_data.YMFG is not None
         y = source_data.YMFG[source_data.DATES[0]]
         max_y = np.max(y)
         where_max_ymfg = np.where(np.isclose(y, max_y))[0]
+        assert source_data.DGAS is not None
         dgas = source_data.DGAS[source_data.DATES[0]]
         gas_density = np.array(
             [
@@ -1756,9 +1837,11 @@ def _calculate_molar_vols_co2(
         )
         oil_density = np.ones_like(water_density)
         if scenario == Scenario.DEPLETED_OIL_GAS_FIELD:
+            assert source_data.YMFO is not None
             y = source_data.YMFO[source_data.DATES[0]]
             max_y = np.max(y)
             where_max_xmfo = np.where(np.isclose(y, max_y))[0]
+            assert source_data.DOIL is not None
             doil = source_data.DOIL[source_data.DATES[0]]
             oil_density = np.array(
                 [
@@ -1795,6 +1878,7 @@ def _calculate_molar_vols_co2(
             )
             logging.warning(format_warning(msg))
         # Where xmf2 is 0, or the closest approximation available
+        assert source_data.BWAT is not None
         bwat = source_data.BWAT[source_data.DATES[0]]
         water_density = np.array(
             [

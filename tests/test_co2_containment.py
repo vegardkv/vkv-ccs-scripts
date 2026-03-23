@@ -85,10 +85,12 @@ def _simple_cube_grid_eclipse():
         SWAT={date: 1 - value for date, value in gas_saturations.items()},
         SGAS=gas_saturations,
         BGAS={date: np.ones(size) * 100.0 for date in dates},
-        xmfs={2: {
-            date: np.ones(size) * 0.02 * value
-            for date, value in gas_saturations.items()
-        }},
+        xmfs={
+            2: {
+                date: np.ones(size) * 0.02 * value
+                for date, value in gas_saturations.items()
+            }
+        },
         ymfs={2: {date: np.ones(size) * 0.99 for date in dates}},
     )
 

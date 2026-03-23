@@ -1,4 +1,3 @@
-
 from pathlib import Path
 
 import numpy as np
@@ -82,18 +81,20 @@ def test_mass_maps_with_lgr(lgr_data_dir, lgr_co2_mass_config):
     # - FSMMO (mobile)
     # - FSMTR (trapped)
     # Their sum should equal FSMIP (total).
-    # Create a dictionary of (date, property) -> value from the summary file for easy lookup:
+    # dict[(date, property)] -> value from the summary file for easy lookup:
     smry = Summary(str(lgr_data_dir / "DEP_GAS_4"))
     unsmry: dict[tuple[str, str], float] = {}
     for i, dt in enumerate(smry.report_dates):
         date_str = dt.strftime("%Y%m%d")
         for prop in ["FSMIP", "FSMDS", "FSMMO", "FSMTR"]:
             # Divide by 1000 for proper comparison
-            unsmry[(date_str, prop)] = smry.numpy_vector(prop, report_only=True)[i] / 1000
+            unsmry[(date_str, prop)] = (
+                smry.numpy_vector(prop, report_only=True)[i] / 1000
+            )
 
-    # Compare total amount of CO2 in total and dissolved maps to summary values. We allow
-    # a 1% relative difference, which is somewhat arbitrary but should be sufficient to catch
-    # major issues with the LGR handling.
+    # Compare total amount of CO2 in total and dissolved maps to summary
+    # values. We allow a 1% relative difference, which is somewhat arbitrary
+    # but should be sufficient to catch major issues with the LGR handling.
     # TODO: look into comparing FSMMO as well
     total_gri_files = sorted(Path(output_dir).glob("all--*co2_mass_total--*.gri"))
     assert len(total_gri_files) == 9

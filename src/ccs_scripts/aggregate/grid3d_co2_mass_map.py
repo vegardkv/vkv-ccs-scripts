@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-import copy
 import logging
 import os
 import shutil
@@ -19,7 +18,6 @@ from ccs_scripts.aggregate._co2_mass import MapName, translate_co2data_to_proper
 from ccs_scripts.aggregate._config import AggregationMethod, RootConfig
 from ccs_scripts.aggregate._utils import log_input_configuration
 from ccs_scripts.co2_containment.co2_calculation import (
-    RELEVANT_PROPERTIES,
     RegionInfo,
     ZoneInfo,
     calculate_co2,
@@ -133,7 +131,7 @@ def clean_tmp(grid_folder: str):
 
 def co2_mass_property_to_map(
     config_: RootConfig,
-    out_property_list: List[Optional[str]],
+    out_property_list: List[str],
     co2_mass_settings: _config.CO2MassSettings,
     cell_size: Optional[float] = None,
 ):
@@ -152,14 +150,13 @@ def co2_mass_property_to_map(
     # Aggregate maps:
     config_.input.properties = []
     for props in out_property_list:
-        if isinstance(props, str):
-            config_.input.properties.append(
-                _config.Property(
-                    props,
-                    None,
-                    1e-6,  # 0.001 kg
-                )
+        config_.input.properties.append(
+            _config.Property(
+                props,
+                None,
+                1e-6,  # 0.001 kg
             )
+        )
     grid3d_aggregate_map.generate_from_config(config_)
 
     # Migration time maps:

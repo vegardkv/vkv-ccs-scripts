@@ -1,6 +1,6 @@
-from collections.abc import Iterable
 import logging
 import sys
+from collections.abc import Iterable
 from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
@@ -187,8 +187,7 @@ def identify_gas_less_cells(
 
 
 def identify_gas_less_cells_from_iterator(
-    sgas_iter: Iterable[np.ndarray],
-    dissolved_iter: Iterable[np.ndarray] | None
+    sgas_iter: Iterable[np.ndarray], dissolved_iter: Iterable[np.ndarray] | None
 ) -> np.ndarray:
     gas_less = np.logical_and.reduce([np.abs(s) < THRESHOLD_GAS for s in sgas_iter])
     if dissolved_iter is not None:
