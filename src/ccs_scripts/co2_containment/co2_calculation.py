@@ -7,6 +7,7 @@ import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Literal, Optional, Tuple
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -513,7 +514,14 @@ def _extract_source_data(
 
     """
     logging.info("Start extracting source data\n")
-    grid = xtgeo.grid_from_file(grid_file)
+    # Read grid file. Currently, the LGRs are not supported by xtgeo grids
+    # and all LGR information seems to be discarded during reading. However,
+    # a warning is raised, and we'll use this as an indication of whether LGRs
+    # are present or not.
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        grid = xtgeo.grid_from_file(grid_file)
+    has_lgr = any("egrid file contains local grid refinements (LGR)" in str(warn.message) for warn in w)
     unrst_names = [p for p in props_to_extract if p in xtgeo.list_gridproperties(unrst_file)]
     unrst = xtgeo.gridproperties_from_file(
         unrst_file, grid=grid, names=unrst_names, dates="all", namestyle=1
@@ -594,10 +602,26 @@ def _extract_source_data(
     props_reduced["VOL"] = {d: vol for d in dates}
     if init is not None:
         porv = init.get_prop_by_name("PORV")
-        if porv is not None:
-            props_reduced["PORV"] = {
-                d: porv.values[active_cells].data for d in dates
-            }
+        if not has_lgr:
+            if porv is not None:
+                props_reduced["PORV"] = {
+                    d: porv.values[active_cells].data for d in dates
+                }
+        elif "RPORV" not in props_reduced:
+            # Grids with LGRs will not have a valid PORV values for the cells
+            # affected by LGR. For Cirrus, these cells will have a value of 1.0
+            # (we believe), but other simulators are unclear. In any case,
+            # we override these values with PORV calculated from PORO and
+            # bulk. The exception is if RPORV is already present, in which case
+            # we don't need PORV.
+            # TODO: inform users that LGR porv values have been inferred.
+            poro = init.get_prop_by_name("PORO")
+            porv = init.get_prop_by_name("PORV")
+            if poro is not None and porv is not None:
+                poro_vals = poro.values[active_cells].data
+                porv_vals = porv.values[active_cells].data
+                porv_proxy = np.where(porv_vals == 1.0, poro_vals * vol, porv_vals)
+                props_reduced["PORV"] = {d: porv_proxy for d in dates}
     # Separate the indexed mole-fraction props from the static ones
     xmfs = {i: props_reduced.pop(f"XMF{i}") for i in component_indices if f"XMF{i}" in props_reduced}
     ymfs = {i: props_reduced.pop(f"YMF{i}") for i in component_indices if f"YMF{i}" in props_reduced}

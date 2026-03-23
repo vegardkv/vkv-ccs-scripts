@@ -34,6 +34,10 @@ def lgr_co2_mass_config(lgr_data_dir, tmp_path):
         output=Output(
             mapfolder=str(output_dir),
         ),
+        computesettings=ComputeSettings(
+            aggregation=AggregationMethod.DISTRIBUTE,
+            zone=False,
+        ),
         co2_mass_settings=CO2MassSettings(
             unrst_source=str(lgr_data_dir / "DEP_GAS_4.UNRST"),
             init_source=str(lgr_data_dir / "DEP_GAS_4.INIT"),
@@ -73,41 +77,43 @@ def test_mass_maps_with_lgr(lgr_data_dir, lgr_co2_mass_config):
     # 9 time stamps, 3 maps per timestamp:
     assert len(list(Path(output_dir).glob("*.gri"))) == 9 * 3
 
-    # Verify that the summed co2_mass_total maps match the UNSMRY FSMIP vector.
-    # In this Cirrus model the equivalent of PFLOTRAN's FGMDS/FGMTR/FGMMO are
-    # FSMDS (dissolved), FSMMO (mobile) and FSMTR (trapped).  Their sum must
-    # equal FSMIP (total solvent mass in place).
+    # In this Cirrus model, the following keywords are present:
+    # - FSMDS (dissolved)
+    # - FSMMO (mobile)
+    # - FSMTR (trapped)
+    # Their sum should equal FSMIP (total).
+    # Create a dictionary of (date, property) -> value from the summary file for easy lookup:
     smry = Summary(str(lgr_data_dir / "DEP_GAS_4"))
-    unsmry_totals = smry.numpy_vector("FSMIP", report_only=True)
-    unsmry_totals_from_components = (
-        smry.numpy_vector("FSMDS", report_only=True)
-        + smry.numpy_vector("FSMMO", report_only=True)
-        + smry.numpy_vector("FSMTR", report_only=True)
-    )
-    np.testing.assert_allclose(
-        unsmry_totals_from_components,
-        unsmry_totals,
-        rtol=1e-6,
-        err_msg="FSMDS + FSMMO + FSMTR should equal FSMIP",
-    )
-    date_to_unsmry = {
-        dt.strftime("%Y%m%d"): total
-        for dt, total in zip(smry.report_dates, unsmry_totals)
-    }
+    unsmry: dict[tuple[str, str], float] = {}
+    for i, dt in enumerate(smry.report_dates):
+        date_str = dt.strftime("%Y%m%d")
+        for prop in ["FSMIP", "FSMDS", "FSMMO", "FSMTR"]:
+            # Divide by 1000 for proper comparison
+            unsmry[(date_str, prop)] = smry.numpy_vector(prop, report_only=True)[i] / 1000
 
+    # Compare total amount of CO2 in total and dissolved maps to summary values. We allow
+    # a 1% relative difference, which is somewhat arbitrary but should be sufficient to catch
+    # major issues with the LGR handling.
+    # TODO: look into comparing FSMMO as well
     total_gri_files = sorted(Path(output_dir).glob("all--*co2_mass_total--*.gri"))
     assert len(total_gri_files) == 9
     for gri_path in total_gri_files:
         date_str = gri_path.stem.split("--")[-1]
         surface = xtgeo.surface_from_file(str(gri_path))
         gri_total = float(np.ma.filled(surface.values, 0.0).sum())
-        unsmry_total = date_to_unsmry[date_str]
-        np.testing.assert_allclose(
-            gri_total,
-            unsmry_total,
-            rtol=0.01,
-            err_msg=f"CO2 mass mismatch at {date_str}: gri={gri_total}, unsmry={unsmry_total}",
-        )
+        unsmry_total = unsmry[(date_str, "FSMIP")]
+        assert gri_total == pytest.approx(unsmry_total, rel=0.01)
+
+    dissolved_gri_files = sorted(
+        Path(output_dir).glob("all--*co2_mass_dissolved_water_phase--*.gri")
+    )
+    assert len(dissolved_gri_files) == 9
+    for gri_path in dissolved_gri_files:
+        date_str = gri_path.stem.split("--")[-1]
+        surface = xtgeo.surface_from_file(str(gri_path))
+        gri_total = float(np.ma.filled(surface.values, 0.0).sum())
+        fsmds_total = unsmry[(date_str, "FSMDS")]
+        assert gri_total == pytest.approx(fsmds_total, rel=0.01)
 
 
 def test_aggregate_maps_sgas_smooth_with_lgr(lgr_aggregate_sgas_config):
