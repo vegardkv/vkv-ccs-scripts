@@ -569,7 +569,7 @@ def _extract_source_data(
     # indices. Add assertions everywhere?
     active_cells = grid.actnum_array.astype(bool) & ~gasless
 
-    dates = unrst.dates
+    dates = list(dict.fromkeys(unrst.dates))  # preserve order, but remove duplicates
     extracted_names = unrst_names
     # dict[property][date] with only active and non-gasless cells
     props_reduced: dict[str, dict[str, np.ndarray]] = {p: {} for p in extracted_names}
