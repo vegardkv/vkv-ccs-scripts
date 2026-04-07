@@ -1,15 +1,63 @@
 import itertools
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
-from resdata.grid import Grid
+import numpy as np
+import xtgeo
 
 from ccs_scripts.utils.timer import Timer
 
 MAX_STEPS_RESOLVE_CELLS = 20
 MAX_NEAREST_GROUPS_SEARCH_DISTANCE = 3
+
+
+@dataclass
+class GridData:
+    """Pre-computed grid lookup arrays (C-order / xtgeo convention)."""
+
+    nx: int
+    ny: int
+    nz: int
+    n_active: int
+    ijk_from_active: np.ndarray  # (n_active, 3)
+    x_active: np.ndarray  # (n_active,)
+    y_active: np.ndarray  # (n_active,)
+    z_active: np.ndarray  # (n_active,)
+    active_index_3d: np.ndarray  # (nx, ny, nz), values are active index or -1
+    xtgeo_grid: Any = field(repr=False)  # xtgeo.Grid (kept for point-in-cell lookups)
+
+    @staticmethod
+    def from_xtgeo_grid(grid: xtgeo.Grid) -> "GridData":
+        """Build pre-computed lookup arrays from an xtgeo grid (C-order)."""
+        dims = grid.dimensions  # (ncol, nrow, nlay)
+        actnum_flat = grid.actnum_array.ravel()
+        active_global = np.where(actnum_flat > 0)[0]
+        n_active = len(active_global)
+
+        ijk = (
+            np.column_stack(np.unravel_index(active_global, dims))
+            if n_active > 0
+            else np.empty((0, 3), dtype=int)
+        )
+
+        global_to_active = np.full(int(np.prod(dims)), -1, dtype=int)
+        global_to_active[active_global] = np.arange(n_active)
+
+        xp, yp, zp = grid.get_xyz()
+        return GridData(
+            nx=dims[0],
+            ny=dims[1],
+            nz=dims[2],
+            n_active=n_active,
+            ijk_from_active=ijk,
+            x_active=xp.values.ravel()[active_global],
+            y_active=yp.values.ravel()[active_global],
+            z_active=zp.values.ravel()[active_global],
+            active_index_3d=global_to_active.reshape(dims),
+            xtgeo_grid=grid,
+        )
 
 
 @dataclass
@@ -49,7 +97,7 @@ class PlumeGroups:
 
     def resolve_undetermined_cells(
         self,
-        grid: Grid,
+        grid_data: GridData,
         cell_map_gasless_to_active: Dict[int, int],
         cell_map_active_to_gasless: Dict[int, int],
     ) -> List:
@@ -62,9 +110,9 @@ class PlumeGroups:
         groups_to_merge = []  # A list of list of groups to merge
         while len(ind_to_resolve) > 0 and counter <= MAX_STEPS_RESOLVE_CELLS:
             for ind in ind_to_resolve:
-                ijk = grid.get_ijk(active_index=cell_map_gasless_to_active[ind])
+                ijk = tuple(grid_data.ijk_from_active[cell_map_gasless_to_active[ind]])
                 groups_nearby = self._find_nearest_groups(
-                    ijk, grid, cell_map_active_to_gasless
+                    ijk, grid_data, cell_map_active_to_gasless
                 )
                 if [-1] in groups_nearby:
                     groups_nearby = [x for x in groups_nearby if x != [-1]]
@@ -84,11 +132,11 @@ class PlumeGroups:
             if len(updated_ind_to_resolve) == len(ind_to_resolve):
                 updated = False
                 for ind in ind_to_resolve:
-                    ijk = grid.get_ijk(active_index=cell_map_gasless_to_active[ind])
+                    ijk = tuple(grid_data.ijk_from_active[cell_map_gasless_to_active[ind]])
                     # Wider search radius when looking for nearby groups
                     for tolerance in range(2, MAX_NEAREST_GROUPS_SEARCH_DISTANCE + 1):
                         groups_nearby = self._find_nearest_groups(
-                            ijk, grid, cell_map_active_to_gasless, tol=tolerance
+                            ijk, grid_data, cell_map_active_to_gasless, tol=tolerance
                         )
                         if len(groups_nearby) >= 1:
                             self.set_cell_groups(ind, groups_nearby[0])
@@ -134,20 +182,20 @@ class PlumeGroups:
         return new_groups_to_merge
 
     def _find_nearest_groups(
-        self, ijk, grid, cell_map_active_to_gasless: Dict[int, int], tol: int = 1
+        self, ijk, grid_data: GridData, cell_map_active_to_gasless: Dict[int, int], tol: int = 1
     ) -> List[List[int]]:
         out = []
         i1, j1, k1 = ijk
         neigs = list(
             itertools.product(
-                range(max((i1 - tol), 0), min((i1 + tol), grid.get_nx() - 1) + 1),
-                range(max((j1 - tol), 0), min((j1 + tol), grid.get_ny() - 1) + 1),
-                range(max((k1 - tol), 0), min((k1 + tol), grid.get_nz() - 1) + 1),
+                range(max((i1 - tol), 0), min((i1 + tol), grid_data.nx - 1) + 1),
+                range(max((j1 - tol), 0), min((j1 + tol), grid_data.ny - 1) + 1),
+                range(max((k1 - tol), 0), min((k1 + tol), grid_data.nz - 1) + 1),
             )
         )
 
         for ijk in neigs:
-            active_ind = grid.get_active_index(ijk=ijk)
+            active_ind = int(grid_data.active_index_3d[ijk])
             if active_ind in cell_map_active_to_gasless:
                 ind = cell_map_active_to_gasless[active_ind]
                 if ind != -1 and self.status[ind] == Status.HAS_CO2:
