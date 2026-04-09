@@ -6,7 +6,21 @@ import xtgeo
 
 
 class GridHandler:
-    def __init__(self, grid_file_path: Path, properties_file_path: Path, monkey_patch_xtgeo: bool = True):
+    def __init__(
+        self,
+        grid_file_path: Path,
+        properties_file_path: Path,
+        monkey_patch_xtgeo: bool = True,
+    ):
+        # The purpose of this class is to hide the implementation details of how the grid
+        # and properties are read. A specific issue when using xtgeo directly is that it
+        # is slow compared to e.g. resdata when reading a lot of properties from a UNRST
+        # file. One of the main bottlenecks at the time of writing is that actnum is
+        # extracted (and copied) twice per property. A hacky fix is to monkey-patch these
+        # two methods on the grid.
+        #
+        # Another possibility we might explore in the future is lazy-reading properties to
+        # improve memory usage, but this is not currently implemented.
         (
             self._grid,
             self._has_lgr
@@ -14,6 +28,13 @@ class GridHandler:
         self._properties_file = properties_file_path
         self._available_properties = xtgeo.list_gridproperties(self._properties_file)
         if monkey_patch_xtgeo:
+            # Create a copy of the grid so that the monkey-patched version is only
+            # handled locally in this class. This is to avoid unintended consequences
+            # in other parts of the code, making it simpler to remove the monkey-patching
+            # later if needed.
+            #
+            # The memory and performance cost of duplicating the grid is negligible
+            # compared to the cost of reading properties
             self._property_grid = self._grid.copy()
             _monkey_patch_xtgeo_grid(self._property_grid)
         else:
