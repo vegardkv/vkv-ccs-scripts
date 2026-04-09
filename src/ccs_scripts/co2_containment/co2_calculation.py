@@ -3,6 +3,7 @@
 
 import copy
 import logging
+from pathlib import Path
 import warnings
 from dataclasses import dataclass, field
 from enum import Enum
@@ -12,6 +13,7 @@ import numpy as np
 import pandas as pd
 import xtgeo
 
+from ccs_scripts.utils.gridproperty_tools import GridHandler
 from ccs_scripts.utils.timer import Timer
 from ccs_scripts.utils.utils import (
     THRESHOLD_DISSOLVED,
@@ -521,30 +523,17 @@ def _extract_source_data(
 
     """
     logging.info("Start extracting source data\n")
-    # Read grid file. Currently, the LGRs are not supported by xtgeo grids
-    # and all LGR information seems to be discarded during reading. However,
-    # a warning is raised, and we'll use this as an indication of whether LGRs
-    # are present or not.
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
-        grid = xtgeo.grid_from_file(grid_file)
-    has_lgr = any(
-        "egrid file contains local grid refinements (LGR)" in str(warn.message)
-        for warn in w
-    )
+    grid_handler = GridHandler(Path(grid_file), Path(unrst_file))
     unrst_names = [
-        p for p in props_to_extract if p in xtgeo.list_gridproperties(unrst_file)
+        p for p in props_to_extract if p in grid_handler.property_names
     ]
-    unrst = xtgeo.gridproperties_from_file(
-        unrst_file, grid=grid, names=unrst_names, dates="all", namestyle=1
-    )
 
     init: xtgeo.GridProperties | None = None
     if init_file is not None:
         try:
             # Extract everything from the init file. This is (probably) small
             # amounts of data compared to the dynamic part
-            init = xtgeo.gridproperties_from_file(init_file, grid=grid, names="all")
+            init = xtgeo.gridproperties_from_file(init_file, grid=grid_handler.grid, names="all")
         except Exception:
             init = None
     if init is None:
@@ -559,21 +548,22 @@ def _extract_source_data(
         )
         raise RuntimeError(format_error(error_text))
 
+    unrst_props = grid_handler.read_properties(names=unrst_names, dates="all")
     gasless = identify_gas_less_cells_from_iterator(
-        (p.values for p in unrst.props if p.name.startswith("SGAS")),
-        (p.values for p in unrst.props if p.name.startswith(dissolved_props[0])),
+        (p.values for p in unrst_props.props if p.name.startswith("SGAS")),
+        (p.values for p in unrst_props.props if p.name.startswith(dissolved_props[0])),
     )
     # TODO: whenever active cells are used in general, make
     # sure that they are bool in type, otherwise, unexpected
     # bugs can occur due to numpy treating non-bool arrays as
     # indices. Add assertions everywhere?
-    active_cells = grid.actnum_array.astype(bool) & ~gasless
+    active_cells = grid_handler.grid.actnum_array.astype(bool) & ~gasless
 
-    dates = list(dict.fromkeys(unrst.dates))  # preserve order, but remove duplicates
+    dates = list(dict.fromkeys(unrst_props.dates))  # preserve order, but remove duplicates
     extracted_names = unrst_names
     # dict[property][date] with only active and non-gasless cells
     props_reduced: dict[str, dict[str, np.ndarray]] = {p: {} for p in extracted_names}
-    for prop in unrst.props:
+    for prop in unrst_props.props:
         parts = prop.name.split("--")
         if len(parts) == 1:
             pname = prop.name
@@ -604,18 +594,18 @@ def _extract_source_data(
 
     log_saturation_summaries(props_reduced)
     # Tuple with (x,y,z) for each cell:
-    xp, yp, _ = grid.get_xyz()
+    xp, yp, _ = grid_handler.grid.get_xyz()
     cells_x = xp.values[active_cells].data
     cells_y = yp.values[active_cells].data
 
-    zone = _process_zones(zone_info, grid, active_cells)
-    region = _process_regions(region_info, grid, init, active_cells)
-    vol = grid.get_bulk_volume().values[active_cells]
+    zone = _process_zones(zone_info, grid_handler.grid, active_cells)
+    region = _process_regions(region_info, grid_handler.grid, init, active_cells)
+    vol = grid_handler.grid.get_bulk_volume().values[active_cells]
     try:
         cell_size = np.median(vol)
-        dx = grid.get_dx().values[active_cells].data
-        dy = grid.get_dy().values[active_cells].data
-        dz = grid.get_dz().values[active_cells].data
+        dx = grid_handler.grid.get_dx().values[active_cells].data
+        dy = grid_handler.grid.get_dy().values[active_cells].data
+        dz = grid_handler.grid.get_dz().values[active_cells].data
         _log_grid_cell_dimensions(vol, dx, dy, dz)
     except Exception as e:
         logging.info(format_warning(f"WARNING: Could not compute grid cell size: {e}"))
@@ -624,7 +614,7 @@ def _extract_source_data(
     props_reduced["VOL"] = {d: vol for d in dates}
     if init is not None:
         porv = init.get_prop_by_name("PORV")
-        if not has_lgr:
+        if not grid_handler.has_lgr:
             if porv is not None:
                 props_reduced["PORV"] = {
                     d: porv.values[active_cells].data for d in dates

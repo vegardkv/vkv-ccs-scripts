@@ -31,6 +31,7 @@ from ccs_scripts.co2_plume_tracking.utils import (
     assemble_plume_groups_into_dict,
     sort_well_names,
 )
+from ccs_scripts.utils.gridproperty_tools import GridHandler
 from ccs_scripts.utils.timer import Timer
 from ccs_scripts.utils.utils import (
     format_error,
@@ -80,22 +81,16 @@ def _find_cell_xy(
 
 
 def _fetch_properties_xtgeo(
-    grid: xtgeo.Grid,
-    unrst_file: str,
+    grid_handler: GridHandler,
     props_to_extract: List[str],
 ) -> Tuple[Dict[str, Dict[str, np.ndarray]], List[str]]:
     """Fetch properties from UNRST file using xtgeo.
 
     Returns properties for active cells only, in C-order.
     """
-    available = xtgeo.list_gridproperties(unrst_file)
-    names = [p for p in props_to_extract if p in available]
-
-    gprops = xtgeo.gridproperties_from_file(
-        unrst_file, grid=grid, names=names, dates="all", namestyle=1
-    )
-
-    actnum = grid.actnum_array.astype(bool)
+    names = [p for p in props_to_extract if p in grid_handler.property_names]
+    gprops = grid_handler.read_properties(names=names, dates="all")
+    actnum = grid_handler.grid.actnum_array.astype(bool)
 
     props: Dict[str, Dict[str, np.ndarray]] = {}
     dates_ordered: List[str] = []
@@ -146,17 +141,16 @@ def load_plume_tracking_data(
         dates: Ordered date strings
         gasless: Boolean mask over active cells (True = gasless)
     """
-    xtgeo_grid = xtgeo.grid_from_file(grid_file)
-    grid_data = GridData.from_xtgeo_grid(xtgeo_grid)
+    grid_handler = GridHandler(Path(grid_file), Path(unrst_file))
+    grid_data = GridData.from_xtgeo_grid(grid_handler.grid)
 
-    available = xtgeo.list_gridproperties(unrst_file)
-    dissolved_prop = next((p for p in ("AMFG", "XMF2") if p in available), None)
+    dissolved_prop = next((p for p in ("AMFG", "XMF2") if p in grid_handler.property_names), None)
 
     props_to_extract = ["SGAS"]
     if dissolved_prop is not None:
         props_to_extract.append(dissolved_prop)
 
-    properties, dates = _fetch_properties_xtgeo(xtgeo_grid, unrst_file, props_to_extract)
+    properties, dates = _fetch_properties_xtgeo(grid_handler, props_to_extract)
     gasless = _find_gasless_cells(properties)
     return grid_data, properties, dates, gasless
 

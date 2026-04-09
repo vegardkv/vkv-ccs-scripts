@@ -62,10 +62,11 @@ def translate_co2data_to_property(
     store_all = "all" in maps or len(maps) == 0
 
     final_props: list[xtgeo.GridProperty] = []
+    property_template = xtgeo.GridProperty(grid)
     for co2_at_date in co2_data.data_list:
         # TODO: memory-intensive? Could also write to file directly
         tmp_props: dict[MapName, xtgeo.GridProperty] = _convert_to_grid(
-            co2_at_date, grid, co2_data.active_cells
+            co2_at_date, property_template, co2_data.active_cells
         )
         if store_all or "total_co2" in maps:
             final_props.append(tmp_props[MapName.MASS_TOT])
@@ -100,7 +101,7 @@ def translate_co2data_to_property(
 
 def _convert_to_grid(
     co2_at_date: Co2DataAtTimeStep,
-    grid: xtgeo.Grid,
+    property_template: xtgeo.GridProperty,
     active_cells: np.ndarray,
 ) -> dict[MapName, xtgeo.GridProperty]:
     """
@@ -119,7 +120,8 @@ def _convert_to_grid(
     """
 
     def _create_prop(name: MapName, data: np.ndarray) -> xtgeo.GridProperty:
-        prop = xtgeo.GridProperty(grid, name=name.value, date=co2_at_date.date)
+        prop = property_template.copy(newname=name.value)
+        prop.date = co2_at_date.date
         prop.values[active_cells] = data
         return prop
 
