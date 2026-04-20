@@ -644,18 +644,12 @@ def _calculate_grid_cell_distances(
     dist = {}
     if calculation_type == CalculationType.PLUME_EXTENT:
         if inj_wells is None or len(inj_wells) == 0:
-            dist["WELL"] = np.sqrt(
-                (x_co2 - config.x) ** 2 + (y_co2 - config.y) ** 2
-            )
+            dist["WELL"] = np.sqrt((x_co2 - config.x) ** 2 + (y_co2 - config.y) ** 2)
         else:
             for well in inj_wells:
-                dist[well.name] = np.sqrt(
-                    (x_co2 - well.x) ** 2 + (y_co2 - well.y) ** 2
-                )
+                dist[well.name] = np.sqrt((x_co2 - well.x) ** 2 + (y_co2 - well.y) ** 2)
     elif calculation_type == CalculationType.POINT:
-        dist["ALL"] = np.sqrt(
-            (x_co2 - config.x) ** 2 + (y_co2 - config.y) ** 2
-        )
+        dist["ALL"] = np.sqrt((x_co2 - config.x) ** 2 + (y_co2 - config.y) ** 2)
     elif calculation_type == CalculationType.LINE:
         if config.direction in (LineDirection.NORTH, LineDirection.SOUTH):
             line_value = config.y
@@ -663,7 +657,9 @@ def _calculate_grid_cell_distances(
         else:
             line_value = config.x
             coords = x_co2
-        factor = -1 if config.direction in (LineDirection.WEST, LineDirection.SOUTH) else 1
+        factor = (
+            -1 if config.direction in (LineDirection.WEST, LineDirection.SOUTH) else 1
+        )
         dist["ALL"] = np.maximum(factor * (line_value - coords), 0.0)
 
     text = ""
@@ -714,9 +710,7 @@ def calculate_single_distances(
         inj_wells, calculation_type, x_co2, y_co2, config
     )
 
-    dissolved_prop_key = next(
-        (p for p in ("AMFG", "XMF2") if p in properties), None
-    )
+    dissolved_prop_key = next((p for p in ("AMFG", "XMF2") if p in properties), None)
 
     gas_results = _find_distances_per_time_step(
         "SGAS",
@@ -956,9 +950,7 @@ def _find_distances_at_time_step(
                 for well_name in dist.keys():
                     dist_per_group["ALL"][well_name] = np.full(n_time_steps, np.nan)
             if len(co2_above_threshold) > 0:
-                dist_per_group["ALL"]["ALL"][i] = dist["ALL"][
-                    co2_above_threshold
-                ].min()
+                dist_per_group["ALL"]["ALL"][i] = dist["ALL"][co2_above_threshold].min()
             else:
                 dist_per_group["ALL"]["ALL"][i] = np.nan
 

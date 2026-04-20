@@ -51,9 +51,7 @@ def _find_cell(
     grid_data: GridData, x: float, y: float, z: float
 ) -> Optional[Tuple[int, int, int]]:
     """Find (i, j, k) of cell containing point (x, y, z), or None."""
-    points = xtgeo.Points(
-        pd.DataFrame({"X_UTME": [x], "Y_UTMN": [y], "Z_TVDSS": [z]})
-    )
+    points = xtgeo.Points(pd.DataFrame({"X_UTME": [x], "Y_UTMN": [y], "Z_TVDSS": [z]}))
     result = grid_data.xtgeo_grid.get_ijk_from_points(
         points, zerobased=True, dataframe=True, undef=-1
     )
@@ -144,7 +142,9 @@ def load_plume_tracking_data(
     grid_handler = GridHandler(Path(grid_file), Path(unrst_file))
     grid_data = GridData.from_xtgeo_grid(grid_handler.grid)
 
-    dissolved_prop = next((p for p in ("AMFG", "XMF2") if p in grid_handler.property_names), None)
+    dissolved_prop = next(
+        (p for p in ("AMFG", "XMF2") if p in grid_handler.property_names), None
+    )
 
     props_to_extract = ["SGAS"]
     if dissolved_prop is not None:
@@ -153,6 +153,7 @@ def load_plume_tracking_data(
     properties, dates = _fetch_properties_xtgeo(grid_handler, props_to_extract)
     gasless = _find_gasless_cells(properties)
     return grid_data, properties, dates, gasless
+
 
 DESCRIPTION = """
 Calculations for tracking the CO2 plumes from different injection wells,
@@ -474,6 +475,9 @@ def _find_inj_wells_grid_indices(
             inj_wells_grid_indices[well.name] = []
             for k in range(grid_data.nz):
                 ij = _find_cell_xy(grid_data, x=well.x, y=well.y, k=k)
+                if ij is None:
+                    # Inactive layer, skip
+                    continue
                 active_index = int(grid_data.active_index_3d[ij[0], ij[1], k])
                 if active_index != -1:
                     if ij + (None,) not in inj_wells_grid_indices[well.name]:

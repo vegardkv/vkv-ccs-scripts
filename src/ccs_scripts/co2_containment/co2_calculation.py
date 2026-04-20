@@ -3,10 +3,9 @@
 
 import copy
 import logging
-from pathlib import Path
-import warnings
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Dict, List, Literal, Optional, Tuple
 
 import numpy as np
@@ -524,16 +523,16 @@ def _extract_source_data(
     """
     logging.info("Start extracting source data\n")
     grid_handler = GridHandler(Path(grid_file), Path(unrst_file))
-    unrst_names = [
-        p for p in props_to_extract if p in grid_handler.property_names
-    ]
+    unrst_names = [p for p in props_to_extract if p in grid_handler.property_names]
 
     init: xtgeo.GridProperties | None = None
     if init_file is not None:
         try:
             # Extract everything from the init file. This is (probably) small
             # amounts of data compared to the dynamic part
-            init = xtgeo.gridproperties_from_file(init_file, grid=grid_handler.grid, names="all")
+            init = xtgeo.gridproperties_from_file(
+                init_file, grid=grid_handler.grid, names="all"
+            )
         except Exception:
             init = None
     if init is None:
@@ -559,7 +558,9 @@ def _extract_source_data(
     # indices. Add assertions everywhere?
     active_cells = grid_handler.grid.actnum_array.astype(bool) & ~gasless
 
-    dates = list(dict.fromkeys(unrst_props.dates))  # preserve order, but remove duplicates
+    dates = list(
+        dict.fromkeys(unrst_props.dates)
+    )  # preserve order, but remove duplicates
     extracted_names = unrst_names
     # dict[property][date] with only active and non-gasless cells
     props_reduced: dict[str, dict[str, np.ndarray]] = {p: {} for p in extracted_names}

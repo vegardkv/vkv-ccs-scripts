@@ -132,7 +132,9 @@ class PlumeGroups:
             if len(updated_ind_to_resolve) == len(ind_to_resolve):
                 updated = False
                 for ind in ind_to_resolve:
-                    ijk = tuple(grid_data.ijk_from_active[cell_map_gasless_to_active[ind]])
+                    ijk = tuple(
+                        grid_data.ijk_from_active[cell_map_gasless_to_active[ind]]
+                    )
                     # Wider search radius when looking for nearby groups
                     for tolerance in range(2, MAX_NEAREST_GROUPS_SEARCH_DISTANCE + 1):
                         groups_nearby = self._find_nearest_groups(
@@ -182,7 +184,11 @@ class PlumeGroups:
         return new_groups_to_merge
 
     def _find_nearest_groups(
-        self, ijk, grid_data: GridData, cell_map_active_to_gasless: Dict[int, int], tol: int = 1
+        self,
+        ijk,
+        grid_data: GridData,
+        cell_map_active_to_gasless: Dict[int, int],
+        tol: int = 1,
     ) -> List[List[int]]:
         out = []
         i1, j1, k1 = ijk
