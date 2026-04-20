@@ -149,6 +149,16 @@ class MapSettings:
 
 
 @dataclass
+class LgrMapSettings:
+    name: str
+    mapsettings: MapSettings = field(default_factory=MapSettings)
+
+    def __post_init__(self):
+        if isinstance(self.mapsettings, dict):
+            self.mapsettings = MapSettings(**self.mapsettings)
+
+
+@dataclass
 class Output:
     mapfolder: str
     lowercase: bool = True
@@ -173,3 +183,12 @@ class RootConfig:
     mapsettings: MapSettings = field(default_factory=MapSettings)
     co2_mass_settings: Optional[CO2MassSettings] = None
     migration_time_settings: Optional[MigrationTimeSettings] = None
+    lgr_settings: Optional[List[LgrMapSettings]] = None
+
+    def __post_init__(self):
+        if (
+            self.lgr_settings is not None
+            and len(self.lgr_settings) > 0
+            and isinstance(self.lgr_settings[0], dict)
+        ):
+            self.lgr_settings = [LgrMapSettings(**s) for s in self.lgr_settings]

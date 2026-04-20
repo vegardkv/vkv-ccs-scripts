@@ -1,6 +1,8 @@
 #!/usr/bin/env python
+import copy
 import logging
 import os
+import pathlib
 import shutil
 import sys
 import tempfile
@@ -16,12 +18,18 @@ from ccs_scripts.aggregate import (
 )
 from ccs_scripts.aggregate._co2_mass import MapName, translate_co2data_to_property
 from ccs_scripts.aggregate._config import AggregationMethod, RootConfig
-from ccs_scripts.aggregate._utils import log_input_configuration
+from ccs_scripts.aggregate._utils import (
+    create_lgr_output,
+    log_input_configuration,
+    prepare_lgr_grid,
+    validate_lgr_name,
+)
 from ccs_scripts.co2_containment.co2_calculation import (
     RegionInfo,
     ZoneInfo,
     calculate_co2,
 )
+from ccs_scripts.utils._lgr_utils import extract_lgr_unrst
 from ccs_scripts.utils.timer import Timer
 from ccs_scripts.utils.utils import format_error, format_warning
 
@@ -77,6 +85,48 @@ def generate_co2_mass_maps(config_: RootConfig):
         # Make sure temp directory is deleted even if exception is thrown above
         if delete_tmp_grid_folder:
             clean_tmp(grid_folder)
+
+    if config_.lgr_settings:
+        tmp_dir = tempfile.mkdtemp()
+        try:
+            for lgr_cfg in config_.lgr_settings:
+                lgr_name = lgr_cfg.name
+                logging.info(f"\nGenerating CO2 mass maps for LGR: {lgr_name}")
+                validate_lgr_name(lgr_name, config_.input.grid)
+
+                lgr_egrid = prepare_lgr_grid(config_.input.grid, lgr_name, tmp_dir)
+
+                lgr_unrst = pathlib.Path(tmp_dir) / f"{lgr_name}.UNRST"
+                extract_lgr_unrst(
+                    pathlib.Path(co2_mass_settings.unrst_source), lgr_name, lgr_unrst
+                )
+                lgr_init = pathlib.Path(tmp_dir) / f"{lgr_name}.INIT"
+                extract_lgr_unrst(
+                    pathlib.Path(co2_mass_settings.init_source), lgr_name, lgr_init
+                )
+
+                lgr_co2_settings = _config.CO2MassSettings(
+                    unrst_source=str(lgr_unrst),
+                    init_source=str(lgr_init),
+                    maps=co2_mass_settings.maps,
+                    residual_trapping=co2_mass_settings.residual_trapping,
+                    cirrus_info_file=co2_mass_settings.cirrus_info_file,
+                    calculate_migration_time_map=co2_mass_settings.calculate_migration_time_map,
+                    migration_time_threshold=co2_mass_settings.migration_time_threshold,
+                )
+                lgr_config = copy.deepcopy(config_)
+                lgr_config.input = _config.Input(
+                    grid=str(lgr_egrid),
+                    properties=None,
+                    dates=config_.input.dates,
+                )
+                lgr_config.co2_mass_settings = lgr_co2_settings
+                lgr_config.output = create_lgr_output(config_.output, lgr_name)
+                lgr_config.mapsettings = lgr_cfg.mapsettings
+                lgr_config.lgr_settings = None
+                generate_co2_mass_maps(lgr_config)
+        finally:
+            shutil.rmtree(tmp_dir)
 
 
 def _process_grid_dir(grid_folder: Optional[str]) -> Tuple[str, bool]:

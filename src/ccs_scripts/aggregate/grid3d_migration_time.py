@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+import copy
 import logging
 import os
 import shutil
@@ -17,7 +18,13 @@ from ccs_scripts.aggregate import (
     grid3d_aggregate_map,
 )
 from ccs_scripts.aggregate._config import DEFAULT_LOWER_THRESHOLD, RootConfig
-from ccs_scripts.aggregate._utils import log_input_configuration
+from ccs_scripts.aggregate._utils import (
+    create_lgr_output,
+    log_input_configuration,
+    prepare_lgr_grid,
+    prepare_lgr_properties,
+    validate_lgr_name,
+)
 from ccs_scripts.aggregate.grid3d_aggregate_map import _distribute_config_property
 from ccs_scripts.utils.timer import Timer
 from ccs_scripts.utils.utils import format_error, format_warning
@@ -234,6 +241,30 @@ def generate_from_config(config_: _config.RootConfig):
     finally:
         logging.info(f"\nDeleting temporary directory for 3D grids: {temp_dir}")
         shutil.rmtree(temp_dir)
+
+    if config_.lgr_settings:
+        lgr_tmp_dir = tempfile.mkdtemp()
+        try:
+            for lgr_cfg in config_.lgr_settings:
+                lgr_name = lgr_cfg.name
+                logging.info(f"\nGenerating migration time maps for LGR: {lgr_name}")
+                validate_lgr_name(lgr_name, config_.input.grid)
+
+                lgr_egrid = prepare_lgr_grid(config_.input.grid, lgr_name, lgr_tmp_dir)
+                lgr_properties = prepare_lgr_properties(p_spec, lgr_name, lgr_tmp_dir)
+
+                lgr_config = copy.deepcopy(config_)
+                lgr_config.input = _config.Input(
+                    grid=str(lgr_egrid),
+                    properties=lgr_properties,
+                    dates=config_.input.dates,
+                )
+                lgr_config.output = create_lgr_output(config_.output, lgr_name)
+                lgr_config.mapsettings = lgr_cfg.mapsettings
+                lgr_config.lgr_settings = None
+                generate_from_config(lgr_config)
+        finally:
+            shutil.rmtree(lgr_tmp_dir)
 
 
 def main(arguments=None):

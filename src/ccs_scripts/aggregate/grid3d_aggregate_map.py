@@ -2,7 +2,9 @@
 import logging
 import os
 import pathlib
+import shutil
 import sys
+import tempfile
 import warnings
 from typing import List, Optional, Tuple, Union
 
@@ -25,7 +27,13 @@ from ccs_scripts.aggregate._parser import (
     extract_zonations,
     process_arguments,
 )
-from ccs_scripts.aggregate._utils import log_input_configuration
+from ccs_scripts.aggregate._utils import (
+    create_lgr_output,
+    log_input_configuration,
+    prepare_lgr_grid,
+    prepare_lgr_properties,
+    validate_lgr_name,
+)
 from ccs_scripts.utils.timer import Timer
 from ccs_scripts.utils.utils import format_error, format_warning
 
@@ -334,6 +342,48 @@ def generate_from_config(config: _config.RootConfig):
         config.computesettings,
         config.mapsettings,
         config.output,
+    )
+    if config.lgr_settings:
+        tmp_dir = tempfile.mkdtemp()
+        try:
+            for lgr_cfg in config.lgr_settings:
+                generate_lgr_maps(
+                    config.input, lgr_cfg, config.computesettings, config.output, tmp_dir
+                )
+        finally:
+            shutil.rmtree(tmp_dir)
+
+
+def generate_lgr_maps(
+    input_: _config.Input,
+    lgr_cfg: _config.LgrMapSettings,
+    computesettings: _config.ComputeSettings,
+    output: _config.Output,
+    tmp_dir: str,
+) -> None:
+    """
+    Generate aggregated 2D maps for a single LGR subgrid.
+
+    Extracts the LGR grid and properties to temporary files, then delegates to
+    `generate_maps` so all existing aggregation logic is reused unchanged.
+    Maps are written to a subfolder named after the LGR under the main map folder.
+    """
+    lgr_name = lgr_cfg.name
+    logging.info(f"\nGenerating maps for LGR: {lgr_name}")
+    validate_lgr_name(lgr_name, input_.grid)
+    lgr_egrid = prepare_lgr_grid(input_.grid, lgr_name, tmp_dir)
+    lgr_properties = prepare_lgr_properties(input_.properties or [], lgr_name, tmp_dir)
+    lgr_input = _config.Input(
+        grid=str(lgr_egrid),
+        properties=lgr_properties,
+        dates=input_.dates,
+    )
+    generate_maps(
+        lgr_input,
+        _config.Zonation(),  # no zonation for LGRs
+        computesettings,
+        lgr_cfg.mapsettings,
+        create_lgr_output(output, lgr_name),
     )
 
 

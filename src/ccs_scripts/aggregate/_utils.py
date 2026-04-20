@@ -6,8 +6,16 @@ import socket
 import subprocess
 import sys
 from datetime import datetime
+from pathlib import Path
+from typing import List
 
+from ccs_scripts.aggregate import _config
 from ccs_scripts.aggregate._config import RootConfig
+from ccs_scripts.utils._lgr_utils import (
+    extract_lgr_grid,
+    extract_lgr_unrst,
+    get_lgr_names,
+)
 
 
 def log_input_configuration(config_: RootConfig, map_type: str = "aggregate") -> None:
@@ -285,3 +293,60 @@ def log_input_configuration(config_: RootConfig, map_type: str = "aggregate") ->
 
 def _bool_str(value: bool):
     return "yes" if value else "no"
+
+
+# ---------------------------------------------------------------------------
+# LGR preprocessing helpers
+# ---------------------------------------------------------------------------
+
+
+def validate_lgr_name(lgr_name: str, grid_file: str | Path) -> None:
+    """Raise ValueError if *lgr_name* is not found in *grid_file*."""
+    available = get_lgr_names(Path(grid_file))
+    if lgr_name not in available:
+        names_str = ", ".join(available) if available else "none"
+        raise ValueError(
+            f"LGR '{lgr_name}' not found in grid '{grid_file}'. "
+            f"Available LGRs: {names_str}"
+        )
+
+
+def prepare_lgr_grid(
+    grid_file: str | Path, lgr_name: str, tmp_dir: str | Path
+) -> Path:
+    """Extract the LGR subgrid to *tmp_dir*/{lgr_name}.EGRID and return the path."""
+    lgr_egrid = Path(tmp_dir) / f"{lgr_name}.EGRID"
+    extract_lgr_grid(Path(grid_file), lgr_name).to_file(lgr_egrid)
+    return lgr_egrid
+
+
+def prepare_lgr_properties(
+    property_specs: List[_config.Property],
+    lgr_name: str,
+    tmp_dir: str | Path,
+) -> List[_config.Property]:
+    """Extract LGR data for each property spec and return a new list pointing at the
+    extracted files in *tmp_dir*."""
+    lgr_props = []
+    for spec in property_specs:
+        stem = Path(spec.source).stem
+        lgr_file = Path(tmp_dir) / f"{lgr_name}_{stem}.UNRST"
+        extract_lgr_unrst(Path(spec.source), lgr_name, lgr_file)
+        lgr_props.append(
+            _config.Property(str(lgr_file), spec.name, spec.lower_threshold)
+        )
+    return lgr_props
+
+
+def create_lgr_output(output: _config.Output, lgr_name: str) -> _config.Output:
+    """Return a new Output with mapfolder set to output.mapfolder/lgr_name."""
+    lgr_map_folder = str(Path(output.mapfolder) / lgr_name)
+    os.makedirs(lgr_map_folder, exist_ok=True)
+    return _config.Output(
+        mapfolder=lgr_map_folder,
+        lowercase=output.lowercase,
+        plotfolder=output.plotfolder,
+        use_plotly=output.use_plotly,
+        aggregation_tag=output.aggregation_tag,
+        replace_masked_with_zero=output.replace_masked_with_zero,
+    )
