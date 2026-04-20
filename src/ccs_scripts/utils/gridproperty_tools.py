@@ -21,7 +21,7 @@ class GridHandler:
         #
         # Another possibility we might explore in the future is lazy-reading properties
         # to improve memory usage, but this is not currently implemented.
-        (self._grid, self._has_lgr) = _read_grid(grid_file_path)
+        self._grid, self._has_lgr = _read_grid(grid_file_path)
         self._properties_file = properties_file_path
         self._available_properties = xtgeo.list_gridproperties(self._properties_file)
         if monkey_patch_xtgeo:
