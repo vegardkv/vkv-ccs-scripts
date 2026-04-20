@@ -18,6 +18,7 @@ from ccs_scripts.aggregate._config import (
     CO2MassSettings,
     ComputeSettings,
     Input,
+    LgrMapSettings,
     MapSettings,
     MigrationTimeSettings,
     Output,
@@ -242,6 +243,11 @@ def parse_yaml(
                             )
                         else:
                             p["lower_threshold"][i] = str(DEFAULT_LOWER_THRESHOLD)
+    lgr_settings = (
+        None
+        if "lgr_settings" not in config
+        else [LgrMapSettings(**s) for s in config["lgr_settings"]]
+    )
     return RootConfig(
         input=Input(**config["input"]),
         output=Output(**config["output"]),
@@ -250,6 +256,7 @@ def parse_yaml(
         mapsettings=MapSettings(**config.get("mapsettings", {})),
         co2_mass_settings=co2_mass_settings,
         migration_time_settings=migration_time_settings,
+        lgr_settings=lgr_settings,
     )
 
 
