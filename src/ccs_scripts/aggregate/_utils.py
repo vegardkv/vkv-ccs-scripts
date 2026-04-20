@@ -1,3 +1,4 @@
+import dataclasses
 import getpass
 import logging
 import os
@@ -7,12 +8,11 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import List
 
 from ccs_scripts.aggregate import _config
 from ccs_scripts.aggregate._config import RootConfig
 from ccs_scripts.utils._lgr_utils import (
-    extract_lgr_grid,
+    create_lgr_grid,
     extract_lgr_unrst,
     get_lgr_names,
 )
@@ -300,7 +300,7 @@ def _bool_str(value: bool):
 # ---------------------------------------------------------------------------
 
 
-def validate_lgr_name(lgr_name: str, grid_file: str | Path) -> None:
+def _validate_lgr_name(lgr_name: str, grid_file: str | Path) -> None:
     """Raise ValueError if *lgr_name* is not found in *grid_file*."""
     available = get_lgr_names(Path(grid_file))
     if lgr_name not in available:
@@ -311,42 +311,66 @@ def validate_lgr_name(lgr_name: str, grid_file: str | Path) -> None:
         )
 
 
-def prepare_lgr_grid(
-    grid_file: str | Path, lgr_name: str, tmp_dir: str | Path
-) -> Path:
-    """Extract the LGR subgrid to *tmp_dir*/{lgr_name}.EGRID and return the path."""
-    lgr_egrid = Path(tmp_dir) / f"{lgr_name}.EGRID"
-    extract_lgr_grid(Path(grid_file), lgr_name).to_file(lgr_egrid)
-    return lgr_egrid
-
-
-def prepare_lgr_properties(
-    property_specs: List[_config.Property],
+def prepare_for_lgr_processing_from_input(
+    input_spec: _config.Input,
     lgr_name: str,
-    tmp_dir: str | Path,
-) -> List[_config.Property]:
-    """Extract LGR data for each property spec and return a new list pointing at the
-    extracted files in *tmp_dir*."""
-    lgr_props = []
-    for spec in property_specs:
-        stem = Path(spec.source).stem
-        lgr_file = Path(tmp_dir) / f"{lgr_name}_{stem}.UNRST"
-        extract_lgr_unrst(Path(spec.source), lgr_name, lgr_file)
-        lgr_props.append(
-            _config.Property(str(lgr_file), spec.name, spec.lower_threshold)
-        )
-    return lgr_props
+    tmp_dir: Path,
+) -> _config.Input:
+    if input_spec.properties is None:
+        return input_spec  # No properties to prepare, so return original input spec
+
+    unrst_props = [prop for prop in input_spec.properties if prop.source.endswith(".UNRST")]
+    init_props = [prop for prop in input_spec.properties if prop.source.endswith(".INIT")]
+    # TODO: warn about properties that are not from UNRST/INIT files
+    unrst_file = unrst_props[0].source if unrst_props else None
+    init_file = init_props[0].source if init_props else None
+    lgr_egrid_file, lgr_unrst_file, lgr_init_file = prepare_for_lgr_processing(
+        grid_file=input_spec.grid,
+        properties_unrst_file=unrst_file,
+        properties_init_file=init_file,
+        lgr_name=lgr_name,
+        tmp_dir=tmp_dir,
+    )
+    lgr_input = _config.Input(
+        grid=str(lgr_egrid_file),
+        properties=[
+            dataclasses.replace(prop, source=str(lgr_unrst_file)) for prop in unrst_props
+        ] + [
+            dataclasses.replace(prop, source=str(lgr_init_file)) for prop in init_props
+        ],
+        dates=input_spec.dates,
+    )
+    return lgr_input
+
+
+def prepare_for_lgr_processing(
+    grid_file: Path,
+    properties_unrst_file: Path | None,
+    properties_init_file: Path | None,
+    lgr_name: str,
+    tmp_dir: Path,
+) -> tuple[Path, Path | None, Path | None]:
+    _validate_lgr_name(lgr_name, grid_file)
+    lgr_egrid_file = tmp_dir / f"{lgr_name}.EGRID"
+    create_lgr_grid(grid_file, lgr_name, lgr_egrid_file)
+
+    if properties_unrst_file is not None:
+        lgr_unrst_file = tmp_dir / f"{lgr_name}.UNRST"
+        extract_lgr_unrst(properties_unrst_file, lgr_name, lgr_unrst_file)
+    else:
+        lgr_unrst_file = None
+
+    if properties_init_file is not None:
+        lgr_init_file = tmp_dir / f"{lgr_name}.INIT"
+        extract_lgr_unrst(properties_init_file, lgr_name, lgr_init_file)
+    else:
+        lgr_init_file = None
+
+    return lgr_egrid_file, lgr_unrst_file, lgr_init_file
 
 
 def create_lgr_output(output: _config.Output, lgr_name: str) -> _config.Output:
     """Return a new Output with mapfolder set to output.mapfolder/lgr_name."""
-    lgr_map_folder = str(Path(output.mapfolder) / lgr_name)
-    os.makedirs(lgr_map_folder, exist_ok=True)
-    return _config.Output(
-        mapfolder=lgr_map_folder,
-        lowercase=output.lowercase,
-        plotfolder=output.plotfolder,
-        use_plotly=output.use_plotly,
-        aggregation_tag=output.aggregation_tag,
-        replace_masked_with_zero=output.replace_masked_with_zero,
-    )
+    lgr_map_folder = Path(output.mapfolder) / lgr_name
+    lgr_map_folder.mkdir(exist_ok=True, parents=True)
+    return dataclasses.replace(output, mapfolder=str(lgr_map_folder))

@@ -2,7 +2,6 @@
 import logging
 import os
 import pathlib
-import shutil
 import sys
 import tempfile
 import warnings
@@ -30,9 +29,7 @@ from ccs_scripts.aggregate._parser import (
 from ccs_scripts.aggregate._utils import (
     create_lgr_output,
     log_input_configuration,
-    prepare_lgr_grid,
-    prepare_lgr_properties,
-    validate_lgr_name,
+    prepare_for_lgr_processing_from_input,
 )
 from ccs_scripts.utils.timer import Timer
 from ccs_scripts.utils.utils import format_error, format_warning
@@ -344,14 +341,11 @@ def generate_from_config(config: _config.RootConfig):
         config.output,
     )
     if config.lgr_settings:
-        tmp_dir = tempfile.mkdtemp()
-        try:
+        with tempfile.TemporaryDirectory() as tmp_dir:
             for lgr_cfg in config.lgr_settings:
                 generate_lgr_maps(
                     config.input, lgr_cfg, config.computesettings, config.output, tmp_dir
                 )
-        finally:
-            shutil.rmtree(tmp_dir)
 
 
 def generate_lgr_maps(
@@ -370,14 +364,10 @@ def generate_lgr_maps(
     """
     lgr_name = lgr_cfg.name
     logging.info(f"\nGenerating maps for LGR: {lgr_name}")
-    validate_lgr_name(lgr_name, input_.grid)
-    lgr_egrid = prepare_lgr_grid(input_.grid, lgr_name, tmp_dir)
-    lgr_properties = prepare_lgr_properties(input_.properties or [], lgr_name, tmp_dir)
-    lgr_input = _config.Input(
-        grid=str(lgr_egrid),
-        properties=lgr_properties,
-        dates=input_.dates,
+    lgr_input = prepare_for_lgr_processing_from_input(
+        input_, lgr_name, tmp_dir
     )
+
     generate_maps(
         lgr_input,
         _config.Zonation(),  # no zonation for LGRs

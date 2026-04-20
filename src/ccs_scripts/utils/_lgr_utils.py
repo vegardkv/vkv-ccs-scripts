@@ -5,10 +5,10 @@ Functions here depend on `resdata` and `resfo`, which are imported lazily to avo
 paying the import cost unless LGR functionality is actually needed.
 """
 
-import tempfile
 from pathlib import Path
 
-import xtgeo
+import resfo
+
 
 # Keywords in LGR blocks that carry no property data and should be stripped when
 # writing the extracted LGR UNRST/INIT to a standalone file.
@@ -29,7 +29,7 @@ def get_lgr_names(grid_file: Path) -> list[str]:
     return [rd_grid.get_lgr(i).get_name() for i in range(rd_grid.get_num_lgr())]
 
 
-def extract_lgr_grid(grid_file: Path, lgr_name: str) -> xtgeo.Grid:
+def create_lgr_grid(grid_file: Path, lgr_name: str, lgr_target_file: Path) -> None:
     """Extract a single LGR subgrid from the given EGRID file as an xtgeo Grid.
 
     The LGR is written to a temporary EGRID file and read back with xtgeo. This is
@@ -41,13 +41,7 @@ def extract_lgr_grid(grid_file: Path, lgr_name: str) -> xtgeo.Grid:
 
     rd_grid = ResdataGrid(str(grid_file))
     lgr = rd_grid.get_lgr(lgr_name)
-    with tempfile.NamedTemporaryFile(suffix=".EGRID", delete=False) as tmp:
-        tmp_path = Path(tmp.name)
-    try:
-        lgr.save_EGRID(str(tmp_path))
-        return xtgeo.grid_from_file(tmp_path)
-    finally:
-        tmp_path.unlink(missing_ok=True)
+    lgr.save_EGRID(str(lgr_target_file))
 
 
 def extract_lgr_unrst(source_file: Path, lgr_name: str, output_file: Path) -> None:
@@ -60,8 +54,6 @@ def extract_lgr_unrst(source_file: Path, lgr_name: str, output_file: Path) -> No
     LGR's own INTEHEAD (which carries the correct grid dimensions and date) is
     preserved.
     """
-    import resfo  # lazy import
-
     seqnum = None
     in_target_lgr = False
     block_records: list[tuple[str, object]] = []
