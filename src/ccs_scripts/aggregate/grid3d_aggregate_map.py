@@ -362,7 +362,11 @@ def generate_from_config(config: _config.RootConfig):
         with tempfile.TemporaryDirectory() as tmp_dir:
             for lgr_cfg in config.lgr_settings:
                 generate_lgr_maps(
-                    config.input, lgr_cfg, config.computesettings, config.output, tmp_dir
+                    config.input,
+                    lgr_cfg,
+                    config.computesettings,
+                    config.output,
+                    pathlib.Path(tmp_dir),
                 )
 
 

@@ -41,6 +41,13 @@ def create_lgr_grid(grid_file: Path, lgr_name: str, lgr_target_file: Path) -> No
 
     rd_grid = ResdataGrid(str(grid_file))
     lgr = rd_grid.get_lgr(lgr_name)
+    # Alternative:
+    # import cwrap
+    # try:
+    #     cf = cwrap.open(str(grid_file), "w")
+    #     lgr.save_grdecl(cf, str(lgr_target_file))
+    # finally:
+    #     cf.close()
     lgr.save_EGRID(str(lgr_target_file))
 
 
