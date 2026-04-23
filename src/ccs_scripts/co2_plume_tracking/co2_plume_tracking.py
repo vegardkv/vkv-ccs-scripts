@@ -21,7 +21,6 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-import xtgeo
 
 from ccs_scripts.co2_plume_tracking.utils import (
     GridData,
@@ -45,20 +44,6 @@ DEFAULT_THRESHOLD_GAS = 0.2
 DEFAULT_THRESHOLD_DISSOLVED = 0.0005
 INJ_POINT_THRESHOLD_LATERAL = 80.0
 INJ_POINT_THRESHOLD_VERTICAL = 10.0
-
-
-def _find_cell(
-    grid_data: GridData, x: float, y: float, z: float
-) -> Optional[Tuple[int, int, int]]:
-    """Find (i, j, k) of cell containing point (x, y, z), or None."""
-    points = xtgeo.Points(pd.DataFrame({"X_UTME": [x], "Y_UTMN": [y], "Z_TVDSS": [z]}))
-    result = grid_data.xtgeo_grid.get_ijk_from_points(
-        points, zerobased=True, dataframe=True, undef=-1
-    )
-    i_val = int(result["IX"].iloc[0])
-    if i_val == -1:
-        return None
-    return (i_val, int(result["JY"].iloc[0]), int(result["KZ"].iloc[0]))
 
 
 def _find_cell_xy(
@@ -464,7 +449,7 @@ def _find_inj_wells_grid_indices(
         if well.z is not None:
             found = False
             for z in well.z:
-                ijk = _find_cell(grid_data, x=well.x, y=well.y, z=z)
+                ijk = grid_data.find_cell(x=well.x, y=well.y, z=z)
                 if ijk is not None:
                     inj_wells_grid_indices[well.name] = [ijk]
                     found = True

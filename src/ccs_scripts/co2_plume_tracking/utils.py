@@ -1,3 +1,4 @@
+from functools import cached_property
 import itertools
 import logging
 from dataclasses import dataclass, field
@@ -5,6 +6,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+import resdata.grid
 import xtgeo
 
 from ccs_scripts.utils.timer import Timer
@@ -27,6 +29,17 @@ class GridData:
     z_active: np.ndarray  # (n_active,)
     active_index_3d: np.ndarray  # (nx, ny, nz), values are active index or -1
     xtgeo_grid: Any = field(repr=False)  # xtgeo.Grid (kept for point-in-cell lookups)
+
+    def find_cell(self, x: float, y: float, z: float) -> tuple[int, int, int] | None:
+        # Use resdata to find cell indices. We have tried using 
+        # xtgeo_grid.get_ijk_from_points, but it does not seem to work for some
+        # geometries. The reason is unclear since the error either occurs due to some
+        # caching mechanism, or due to some internals in C++ code.
+        return self._resdata_grid.find_cell(x, y, z)
+
+    @cached_property
+    def _resdata_grid(self) -> resdata.grid.Grid:
+        return resdata.grid.Grid(self.xtgeo_grid.filesrc)
 
     @staticmethod
     def from_xtgeo_grid(grid: xtgeo.Grid) -> "GridData":
