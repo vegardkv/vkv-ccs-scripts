@@ -587,7 +587,7 @@ def _extract_source_data(
                 missing.append((prop, d))
     if missing:
         missing_str = ", ".join([f"{prop} ({d})" for prop, d in missing])
-        logging.info(
+        logging.warning(
             format_warning(
                 f"WARNING: The following date-property pairs are missing: {missing_str}"
             )
@@ -635,6 +635,35 @@ def _extract_source_data(
                 porv_vals = porv.values[active_cells].data
                 porv_proxy = np.where(porv_vals == 1.0, poro_vals * vol, porv_vals)
                 props_reduced["PORV"] = {d: porv_proxy for d in dates}
+    # Infer SOIL from SGAS and SWAT if not stored in the file.
+    # Some simulators (e.g. Eclipse compositional with 3 phases) store SGAS and
+    # SWAT but not SOIL. SOIL = 1 - SGAS - SWAT in those cases, and its presence
+    # is needed to detect the DEPLETED_OIL_GAS_FIELD scenario.
+    if (
+        "SOIL" not in props_reduced
+        and "SGAS" in props_reduced
+        and "SWAT" in props_reduced
+    ):
+        tol = 1e-6
+        soil: dict[str, np.ndarray] = {}
+        for d in dates:
+            if d in props_reduced["SGAS"] and d in props_reduced["SWAT"]:
+                soil[d] = np.maximum(
+                    0.0, 1.0 - props_reduced["SGAS"][d] - props_reduced["SWAT"][d]
+                )
+        max_soil = max((v.max() for v in soil.values()), default=0.0)
+        if max_soil > tol:
+            props_reduced["SOIL"] = soil
+            logging.info(
+                "Oil Saturation (SOIL) not found as property."
+                "\nHowever, SGAS + SWAT != 1 somewhere, so SOIL has been inferred"
+                " as 1 - SGAS - SWAT."
+            )
+        else:
+            logging.info(
+                "Oil Saturation is zero everywhere. Two-phase scenario is assumed."
+            )
+
     # Separate the indexed mole-fraction props from the static ones
     xmfs = {
         i: props_reduced.pop(f"XMF{i}")
