@@ -1,8 +1,8 @@
-from functools import cached_property
 import itertools
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
+from functools import cached_property
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -31,7 +31,7 @@ class GridData:
     xtgeo_grid: Any = field(repr=False)  # xtgeo.Grid (kept for point-in-cell lookups)
 
     def find_cell(self, x: float, y: float, z: float) -> tuple[int, int, int] | None:
-        # Use resdata to find cell indices. We have tried using 
+        # Use resdata to find cell indices. We have tried using
         # xtgeo_grid.get_ijk_from_points, but it does not seem to work for some
         # geometries. The reason is unclear since the error either occurs due to some
         # caching mechanism, or due to some internals in C++ code.
