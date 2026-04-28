@@ -21,22 +21,21 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-from resdata.grid import Grid
-from resdata.resfile import ResdataFile
 
 from ccs_scripts.co2_plume_tracking.utils import (
+    GridData,
     InjectionWellData,
     PlumeGroups,
     Status,
     assemble_plume_groups_into_dict,
     sort_well_names,
 )
+from ccs_scripts.utils.gridproperty_tools import GridHandler
 from ccs_scripts.utils.timer import Timer
 from ccs_scripts.utils.utils import (
-    fetch_properties,
-    find_active_and_gasless_cells,
     format_error,
     format_warning,
+    identify_gas_less_cells,
     read_yaml_file,
     reduce_properties,
 )
@@ -45,6 +44,101 @@ DEFAULT_THRESHOLD_GAS = 0.2
 DEFAULT_THRESHOLD_DISSOLVED = 0.0005
 INJ_POINT_THRESHOLD_LATERAL = 80.0
 INJ_POINT_THRESHOLD_VERTICAL = 10.0
+
+
+def _find_cell_xy(
+    grid_data: GridData, x: float, y: float, k: int
+) -> Optional[Tuple[int, int]]:
+    """Find (i, j) of cell at (x, y) in layer k (nearest-neighbor)."""
+    layer_active = grid_data.active_index_3d[:, :, k]
+    mask = layer_active >= 0
+    if not mask.any():
+        return None
+    active_indices = layer_active[mask]
+    cx = grid_data.x_active[active_indices]
+    cy = grid_data.y_active[active_indices]
+    dist_sq = (cx - x) ** 2 + (cy - y) ** 2
+    idx = np.argmin(dist_sq)
+    ij_positions = np.argwhere(mask)
+    return (int(ij_positions[idx, 0]), int(ij_positions[idx, 1]))
+
+
+def _fetch_properties_xtgeo(
+    grid_handler: GridHandler,
+    props_to_extract: List[str],
+) -> Tuple[Dict[str, Dict[str, np.ndarray]], List[str]]:
+    """Fetch properties from UNRST file using xtgeo.
+
+    Returns properties for active cells only, in C-order.
+    """
+    names = [p for p in props_to_extract if p in grid_handler.property_names]
+    gprops = grid_handler.read_properties(names=names, dates="all")
+    actnum = grid_handler.grid.actnum_array.astype(bool)
+
+    props: Dict[str, Dict[str, np.ndarray]] = {}
+    dates_ordered: List[str] = []
+
+    for prop in gprops.props:
+        parts = prop.name.split("--")
+        pname = parts[0]
+        pdate = str(prop.date or parts[1]) if len(parts) > 1 else str(prop.date)
+
+        if pname not in props:
+            props[pname] = {}
+        props[pname][pdate] = prop.values[actnum].data
+
+        if pdate not in dates_ordered:
+            dates_ordered.append(pdate)
+
+    logging.info(
+        "Done reading properties from file"
+        "\nRelevant properties extracted:"
+        f"\n    {', '.join(list(props.keys()))}\n"
+    )
+    return props, dates_ordered
+
+
+def _find_gasless_cells(
+    properties: Dict[str, Dict[str, np.ndarray]],
+) -> np.ndarray:
+    """Identify gasless cells from property arrays for active cells."""
+    dissolved_prop = None
+    if "AMFS" in properties:
+        dissolved_prop = properties["AMFS"]
+    elif "AMFG" in properties:
+        dissolved_prop = properties["AMFG"]
+    elif "XMF2" in properties:
+        dissolved_prop = properties["XMF2"]
+
+    return identify_gas_less_cells(properties["SGAS"], dissolved_prop)
+
+
+def load_plume_tracking_data(
+    grid_file: str, unrst_file: str
+) -> Tuple[GridData, Dict[str, Dict[str, np.ndarray]], List[str], np.ndarray]:
+    """Load grid and properties needed for plume tracking.
+
+    Returns:
+        grid_data: Pre-computed grid lookup arrays
+        properties: {prop_name: {date_str: array}} for active cells
+        dates: Ordered date strings
+        gasless: Boolean mask over active cells (True = gasless)
+    """
+    grid_handler = GridHandler(Path(grid_file), Path(unrst_file))
+    grid_data = GridData.from_xtgeo_grid(grid_handler.grid)
+
+    dissolved_prop = next(
+        (p for p in ("AMFG", "XMF2") if p in grid_handler.property_names), None
+    )
+
+    props_to_extract = ["SGAS"]
+    if dissolved_prop is not None:
+        props_to_extract.append(dissolved_prop)
+
+    properties, dates = _fetch_properties_xtgeo(grid_handler, props_to_extract)
+    gasless = _find_gasless_cells(properties)
+    return grid_data, properties, dates, gasless
+
 
 DESCRIPTION = """
 Calculations for tracking the CO2 plumes from different injection wells,
@@ -221,8 +315,10 @@ def _log_configuration(config: Configuration) -> None:
 
 
 def calculate_all_plume_groups(
-    grid: Grid,
-    unrst: ResdataFile,
+    grid_data: GridData,
+    properties: Dict[str, Dict[str, np.ndarray]],
+    dates: List[str],
+    gasless: np.ndarray,
     threshold_gas: float,
     threshold_dissolved: float,
     inj_wells: List[InjectionWellData],
@@ -230,26 +326,32 @@ def calculate_all_plume_groups(
     pg_prop_gas, _ = calculate_plume_groups(
         "SGAS",
         threshold_gas,
-        unrst,
-        grid,
+        grid_data,
+        properties,
+        dates,
         inj_wells,
+        gasless,
     )
-    if "AMFG" in unrst:
+    if "AMFG" in properties:
         pg_prop_dissolved, _ = calculate_plume_groups(
             "AMFG",
             threshold_dissolved,
-            unrst,
-            grid,
+            grid_data,
+            properties,
+            dates,
             inj_wells,
+            gasless,
         )
         dissolved_prop_key = "AMFG"
-    elif "XMF2" in unrst:
+    elif "XMF2" in properties:
         pg_prop_dissolved, _ = calculate_plume_groups(
             "XMF2",
             threshold_dissolved,
-            unrst,
-            grid,
+            grid_data,
+            properties,
+            dates,
             inj_wells,
+            gasless,
         )
         dissolved_prop_key = "XMF2"
     else:
@@ -268,20 +370,23 @@ def load_data_and_calculate_plume_groups(
     threshold_dissolved: float = DEFAULT_THRESHOLD_DISSOLVED,
 ) -> Tuple[List[List[str]], Optional[List[List[str]]], Optional[str], List[datetime]]:
     logging.info("\nStart calculations for plume tracking")
-    grid = Grid(f"{case}.EGRID")
-    unrst = ResdataFile(f"{case}.UNRST")
-
-    logging.info(f"Number of active grid cells: {grid.get_num_active()}")
+    grid_data, properties, dates, gasless = load_plume_tracking_data(
+        f"{case}.EGRID", f"{case}.UNRST"
+    )
+    logging.info(f"Number of active grid cells: {grid_data.n_active}")
 
     pg_prop_gas, pg_prop_dissolved, dissolved_prop_key = calculate_all_plume_groups(
-        grid,
-        unrst,
+        grid_data,
+        properties,
+        dates,
+        gasless,
         threshold_gas,
         threshold_dissolved,
         injection_wells,
     )
 
-    return pg_prop_gas, pg_prop_dissolved, dissolved_prop_key, unrst.report_dates
+    report_dates = [datetime.strptime(d, "%Y%m%d") for d in dates]
+    return pg_prop_gas, pg_prop_dissolved, dissolved_prop_key, report_dates
 
 
 def _log_number_of_grid_cells(
@@ -335,7 +440,7 @@ def _log_number_of_grid_cells(
 
 def _find_inj_wells_grid_indices(
     inj_wells_grid_indices: Dict[str, List[Tuple[int, int, Optional[int]]]],
-    grid: Grid,
+    grid_data: GridData,
     inj_wells: List[InjectionWellData],
     print_table: bool = False,
 ):
@@ -344,7 +449,7 @@ def _find_inj_wells_grid_indices(
         if well.z is not None:
             found = False
             for z in well.z:
-                ijk = grid.find_cell(x=well.x, y=well.y, z=z)
+                ijk = grid_data.find_cell(x=well.x, y=well.y, z=z)
                 if ijk is not None:
                     inj_wells_grid_indices[well.name] = [ijk]
                     found = True
@@ -353,9 +458,12 @@ def _find_inj_wells_grid_indices(
                 wells_with_errors.append(well)
         else:
             inj_wells_grid_indices[well.name] = []
-            for k in range(grid.get_nz()):
-                ij = grid.find_cell_xy(x=well.x, y=well.y, k=k)
-                active_index = grid.get_active_index(ijk=ij + (k,))
+            for k in range(grid_data.nz):
+                ij = _find_cell_xy(grid_data, x=well.x, y=well.y, k=k)
+                if ij is None:
+                    # Inactive layer, skip
+                    continue
+                active_index = int(grid_data.active_index_3d[ij[0], ij[1], k])
                 if active_index != -1:
                     if ij + (None,) not in inj_wells_grid_indices[well.name]:
                         inj_wells_grid_indices[well.name].append((ij[0], ij[1], None))
@@ -412,9 +520,11 @@ def _find_inj_wells_grid_indices(
 def calculate_plume_groups(
     attribute_key: str,
     threshold: float,
-    unrst: ResdataFile,
-    grid: Grid,
+    grid_data: GridData,
+    properties: Dict[str, Dict[str, np.ndarray]],
+    dates: List[str],
     inj_wells: List[InjectionWellData],
+    gasless: np.ndarray,
 ) -> Tuple[List[List[str]], Dict[int, int]]:
     """
     Calculates/tracks the plume groups for a single property.
@@ -422,26 +532,24 @@ def calculate_plume_groups(
     each element is a list over the number of active grid cells.
     The string is the name of the plume group, for instance
     "well_A+well_B" (if well_A and well_B have merged).
+
+    Args:
+        attribute_key: Property name to track (e.g. "SGAS", "AMFG", "XMF2")
+        threshold: Threshold for attribute_key
+        grid_data: Pre-computed grid lookup arrays (from GridData.from_xtgeo_grid)
+        properties: {prop_name: {date_str: array}} for active cells
+        dates: Ordered list of date strings ("YYYYMMDD")
+        inj_wells: Injection well data
+        gasless: Boolean mask over active cells (True = gasless)
     """
     timer = Timer()
     timer.start("plume_tracking")
 
     time_start = time.time()
-    n_time_steps = len(unrst.report_steps)
+    n_time_steps = len(dates)
     n_grid_cells_for_logging: Dict[str, List[int]] = {}
 
-    if "AMFG" in unrst:
-        dissolved_prop = "AMFG"
-    elif "XMF2" in unrst:
-        dissolved_prop = "XMF2"
-    props_to_extract = ["SGAS", dissolved_prop]
-    if attribute_key not in props_to_extract:
-        props_to_extract.append(attribute_key)
-    properties, dates = fetch_properties(unrst, props_to_extract)
-
-    active, gasless = find_active_and_gasless_cells(grid, properties, False)
-    global_active_idx = active[~gasless]
-    non_gasless = np.where(np.isin(active, global_active_idx))[0]
+    non_gasless = np.where(~gasless)[0]
     n_cells = len(non_gasless)
 
     properties = reduce_properties(properties, ~gasless)
@@ -452,7 +560,7 @@ def calculate_plume_groups(
 
     inj_wells_grid_indices: Dict[str, List[Tuple[int, int, Optional[int]]]] = {}
     _find_inj_wells_grid_indices(
-        inj_wells_grid_indices, grid, inj_wells, print_table=True
+        inj_wells_grid_indices, grid_data, inj_wells, print_table=True
     )
 
     logging.info(f"\nStart calculating plume tracking for {attribute_key}.\n")
@@ -468,7 +576,7 @@ def calculate_plume_groups(
         groups = PlumeGroups(n_cells)
         _plume_groups_at_time_step(
             data[date],  # type: ignore[arg-type]
-            grid,
+            grid_data,
             i,
             threshold,
             prev_groups,
@@ -502,9 +610,10 @@ def calculate_plume_groups(
         logging.info(f"{percent * 100:>6.1f} %")
     logging.info("")
 
+    report_dates = [datetime.strptime(d, "%Y%m%d") for d in dates]
     timer.start("plume_tracking_logging", "plume_tracking")
     _log_number_of_grid_cells(
-        n_grid_cells_for_logging, unrst.report_dates, attribute_key, inj_wells
+        n_grid_cells_for_logging, report_dates, attribute_key, inj_wells
     )
     timer.stop("plume_tracking_logging")
     logging.info(f"Done calculating plume tracking for {attribute_key}.")
@@ -518,7 +627,7 @@ def calculate_plume_groups(
 
 def _plume_groups_at_time_step(
     data: np.ndarray,
-    grid: Grid,
+    grid_data: GridData,
     i: int,
     threshold: float,
     prev_groups: PlumeGroups,
@@ -542,7 +651,7 @@ def _plume_groups_at_time_step(
     _initialize_groups_from_prev_step_and_inj_wells(
         cells_with_co2,
         prev_groups,
-        grid,
+        grid_data,
         inj_wells,
         inj_wells_grid_indices,
         groups,
@@ -555,7 +664,7 @@ def _plume_groups_at_time_step(
 
     timer.start("plume_tracking_resolve_undetermined", "plume_tracking")
     groups_to_merge = groups.resolve_undetermined_cells(
-        grid, cell_map_gasless_to_active, cell_map_active_to_gasless
+        grid_data, cell_map_gasless_to_active, cell_map_active_to_gasless
     )
     timer.stop("plume_tracking_resolve_undetermined")
     for full_group in groups_to_merge:
@@ -596,7 +705,7 @@ def _plume_groups_at_time_step(
 def _initialize_groups_from_prev_step_and_inj_wells(
     cells_with_co2: np.ndarray,
     prev_groups: PlumeGroups,
-    grid: Grid,
+    grid_data: GridData,
     inj_wells: List[InjectionWellData],
     inj_wells_grid_indices: Dict[str, List[Tuple[int, int, Optional[int]]]],
     groups: PlumeGroups,
@@ -610,8 +719,10 @@ def _initialize_groups_from_prev_step_and_inj_wells(
         else:
             # This grid cell did not have CO2 in the last time step
             active_ind = cell_map_gasless_to_active[index]
-            i, j, k = grid.get_ijk(active_index=active_ind)
-            x, y, z = grid.get_xyz(active_index=active_ind)
+            i, j, k = tuple(grid_data.ijk_from_active[active_ind])
+            x = float(grid_data.x_active[active_ind])
+            y = float(grid_data.y_active[active_ind])
+            z = float(grid_data.z_active[active_ind])
 
             found = False
             for well in inj_wells:
@@ -664,7 +775,7 @@ def _initialize_groups_from_prev_step_and_inj_wells(
                 groups.status[index] = Status.UNDETERMINED
     _update_inj_z_coordinates(inj_wells, new_z_coords)
     _find_inj_wells_grid_indices(
-        inj_wells_grid_indices, grid, inj_wells
+        inj_wells_grid_indices, grid_data, inj_wells
     )  # Might need an update
 
 

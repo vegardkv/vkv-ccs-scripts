@@ -23,8 +23,6 @@ import numpy as np
 import pandas as pd
 import shapely.geometry
 import yaml
-from resdata.grid import Grid
-from resdata.resfile import ResdataFile
 
 from ccs_scripts.co2_containment.calculate import (
     ContainedCo2,
@@ -42,6 +40,7 @@ from ccs_scripts.co2_plume_tracking.co2_plume_tracking import (
     DEFAULT_THRESHOLD_DISSOLVED,
     Configuration,
     calculate_plume_groups,
+    load_plume_tracking_data,
 )
 from ccs_scripts.co2_plume_tracking.utils import InjectionWellData
 from ccs_scripts.utils.timer import Timer
@@ -126,25 +125,23 @@ def _find_plume_groups(
     unrst_file: str,
     injection_wells: List[InjectionWellData],
 ) -> Optional[List[List[str]]]:
-    grid = Grid(grid_file)
-    unrst = ResdataFile(unrst_file)
-    if "AMFG" in unrst:
-        dissolved_prop = "AMFG"
-    elif "XMF2" in unrst:
-        dissolved_prop = "XMF2"
-    else:
-        dissolved_prop = None
+    grid_data, properties, dates, gasless = load_plume_tracking_data(
+        grid_file, unrst_file
+    )
 
+    dissolved_prop = next((p for p in ("AMFG", "XMF2") if p in properties), None)
     if dissolved_prop is None:
-        plume_groups = None
-    else:
-        plume_groups, _ = calculate_plume_groups(
-            attribute_key=dissolved_prop,
-            threshold=0.1 * DEFAULT_THRESHOLD_DISSOLVED,
-            unrst=unrst,
-            grid=grid,
-            inj_wells=injection_wells,
-        )
+        return None
+
+    plume_groups, _ = calculate_plume_groups(
+        attribute_key=dissolved_prop,
+        threshold=0.1 * DEFAULT_THRESHOLD_DISSOLVED,
+        grid_data=grid_data,
+        properties=properties,
+        dates=dates,
+        inj_wells=injection_wells,
+        gasless=gasless,
+    )
     return plume_groups
 
 

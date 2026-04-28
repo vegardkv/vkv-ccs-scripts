@@ -355,6 +355,11 @@ def extract_properties(
     properties: List[xtgeo.GridProperty] = []
     if property_spec is None:
         return properties
+    # If property reading becomes a performance bottleneck, consider using
+    # GridHandler for faster reading. GridHandler is currently best suited
+    # for an EGRID/UNRST pair of files, so some adjustment to GridHandler
+    # is necessary to better handle properties in multiple files that are
+    # all related to the same grid.
     for spec in property_spec:
         try:
             names = (

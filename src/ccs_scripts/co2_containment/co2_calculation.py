@@ -3,28 +3,25 @@
 
 import copy
 import logging
-from dataclasses import dataclass, fields, make_dataclass
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, Iterable, List, Literal, Optional, Tuple, Union
+from pathlib import Path
+from typing import Dict, List, Literal, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 import xtgeo
-from resdata.grid import Grid
-from resdata.resfile import ResdataFile
 
+from ccs_scripts.utils.gridproperty_tools import GridHandler
 from ccs_scripts.utils.timer import Timer
 from ccs_scripts.utils.utils import (
     THRESHOLD_DISSOLVED,
-    fetch_properties,
-    find_active_and_gasless_cells,
     format_error,
     format_warning,
     identify_gas_less_cells,
+    identify_gas_less_cells_from_iterator,
     is_subset,
     log_saturation_summaries,
-    reduce_properties,
-    try_prop,
 )
 
 DEFAULT_CO2_MOLAR_MASS = 44.0
@@ -57,38 +54,96 @@ RELEVANT_PROPERTIES = [
     "YMFO",
 ]
 
-source_data_: List[Tuple[str, Any, None]] = [
-    ("x_coord", np.ndarray, None),
-    ("y_coord", np.ndarray, None),
-    ("DATES", List[str], None),
-    ("VOL", Optional[Dict[str, np.ndarray]], None),
-    ("SOIL", Optional[Dict[str, np.ndarray]], None),
-    ("SWAT", Optional[Dict[str, np.ndarray]], None),
-    ("SGAS", Optional[Dict[str, np.ndarray]], None),
-    ("SGSTRAND", Optional[Dict[str, np.ndarray]], None),
-    ("SGTRH", Optional[Dict[str, np.ndarray]], None),
-    ("RPORV", Optional[Dict[str, np.ndarray]], None),
-    ("PORV", Optional[Dict[str, np.ndarray]], None),
-    ("AMFG", Optional[Dict[str, np.ndarray]], None),
-    ("YMFG", Optional[Dict[str, np.ndarray]], None),
-    ("XMFG", Optional[Dict[str, np.ndarray]], None),
-    ("DWAT", Optional[Dict[str, np.ndarray]], None),
-    ("DGAS", Optional[Dict[str, np.ndarray]], None),
-    ("DOIL", Optional[Dict[str, np.ndarray]], None),
-    ("BWAT", Optional[Dict[str, np.ndarray]], None),
-    ("BGAS", Optional[Dict[str, np.ndarray]], None),
-    ("BOIL", Optional[Dict[str, np.ndarray]], None),
-    ("AMFS", Optional[Dict[str, np.ndarray]], None),
-    ("YMFS", Optional[Dict[str, np.ndarray]], None),
-    ("XMFS", Optional[Dict[str, np.ndarray]], None),
-    ("AMFW", Optional[Dict[str, np.ndarray]], None),
-    ("YMFW", Optional[Dict[str, np.ndarray]], None),
-    ("XMFW", Optional[Dict[str, np.ndarray]], None),
-    ("XMFO", Optional[Dict[str, np.ndarray]], None),
-    ("YMFO", Optional[Dict[str, np.ndarray]], None),
-    ("zone", Optional[np.ndarray], None),
-    ("region", Optional[np.ndarray], None),
-]
+
+@dataclass
+class SourceData:
+    """Dataclass holding all grid properties needed for CO2 calculations.
+
+    The XMF/YMF/ZMF per-component mole fractions (Eclipse compositional) are stored
+    in typed dicts keyed by component index (1-based), e.g. ``xmfs[2]`` for XMF2.
+    """
+
+    x_coord: np.ndarray
+    y_coord: np.ndarray
+    active_cells: np.ndarray  # 3D array with True where calculations are performed
+    DATES: List[str]
+    VOL: Optional[Dict[str, np.ndarray]] = None
+    SOIL: Optional[Dict[str, np.ndarray]] = None
+    SWAT: Optional[Dict[str, np.ndarray]] = None
+    SGAS: Optional[Dict[str, np.ndarray]] = None
+    SGSTRAND: Optional[Dict[str, np.ndarray]] = None
+    SGTRH: Optional[Dict[str, np.ndarray]] = None
+    RPORV: Optional[Dict[str, np.ndarray]] = None
+    PORV: Optional[Dict[str, np.ndarray]] = None
+    AMFG: Optional[Dict[str, np.ndarray]] = None
+    YMFG: Optional[Dict[str, np.ndarray]] = None
+    XMFG: Optional[Dict[str, np.ndarray]] = None
+    DWAT: Optional[Dict[str, np.ndarray]] = None
+    DGAS: Optional[Dict[str, np.ndarray]] = None
+    DOIL: Optional[Dict[str, np.ndarray]] = None
+    BWAT: Optional[Dict[str, np.ndarray]] = None
+    BGAS: Optional[Dict[str, np.ndarray]] = None
+    BOIL: Optional[Dict[str, np.ndarray]] = None
+    AMFS: Optional[Dict[str, np.ndarray]] = None
+    YMFS: Optional[Dict[str, np.ndarray]] = None
+    XMFS: Optional[Dict[str, np.ndarray]] = None
+    AMFW: Optional[Dict[str, np.ndarray]] = None
+    YMFW: Optional[Dict[str, np.ndarray]] = None
+    XMFW: Optional[Dict[str, np.ndarray]] = None
+    XMFO: Optional[Dict[str, np.ndarray]] = None
+    YMFO: Optional[Dict[str, np.ndarray]] = None
+    zone: Optional[np.ndarray] = None
+    region: Optional[np.ndarray] = None
+    # Per-component mole fractions for Eclipse compositional runs, keyed by
+    # component index (1-based).  E.g. xmfs[2] corresponds to XMF2.
+    xmfs: Dict[int, Dict[str, np.ndarray]] = field(default_factory=dict)
+    ymfs: Dict[int, Dict[str, np.ndarray]] = field(default_factory=dict)
+    zmfs: Dict[int, Dict[str, np.ndarray]] = field(default_factory=dict)
+
+    # Names of static property fields (excludes coordinates, DATES, zone, region,
+    # and the indexed mf dicts — see active_property_names for a full list).
+    _STATIC_PROP_FIELDS = [
+        "VOL",
+        "SOIL",
+        "SWAT",
+        "SGAS",
+        "SGSTRAND",
+        "SGTRH",
+        "RPORV",
+        "PORV",
+        "AMFG",
+        "YMFG",
+        "XMFG",
+        "DWAT",
+        "DGAS",
+        "DOIL",
+        "BWAT",
+        "BGAS",
+        "BOIL",
+        "AMFS",
+        "YMFS",
+        "XMFS",
+        "AMFW",
+        "YMFW",
+        "XMFW",
+        "XMFO",
+        "YMFO",
+    ]
+
+    def active_property_names(self) -> List[str]:
+        """Return names of all non-None properties, including indexed XMF/YMF/ZMF.
+
+        The indexed component properties are expanded to their string names
+        (e.g. ``"XMF1"``, ``"XMF2"``) so that functions like ``_n_components``
+        and ``_find_source_and_scenario`` work unchanged.
+        """
+        names: List[str] = [
+            name for name in self._STATIC_PROP_FIELDS if getattr(self, name) is not None
+        ]
+        names.extend(f"XMF{i}" for i in sorted(self.xmfs))
+        names.extend(f"YMF{i}" for i in sorted(self.ymfs))
+        names.extend(f"ZMF{i}" for i in sorted(self.zmfs))
+        return names
 
 
 class CalculationType(Enum):
@@ -176,6 +231,7 @@ class Co2Data:
 
     x_coord: np.ndarray
     y_coord: np.ndarray
+    active_cells: np.ndarray  # 3D array with True where calculations are performed
     data_list: List[Co2DataAtTimeStep]
     units: Literal["kg", "tons", "m3"]
     scenario: Scenario
@@ -279,72 +335,49 @@ def _extract_comp_molar_masses(
 
 def _detect_eclipse_mole_fraction_props(
     unrst_file: str,
-    props_to_extract: List,
-    current_source_data: List[Tuple[str, Any, None]],
-):
+) -> tuple[list[str], list[int], bool]:
     """
-    Detects which and how many components are there in Eclipse data
+    Detects which and how many components are there in Eclipse data.
 
     Args:
-        unrst_file (str): Path to UNSRT file
-        props_to_extract (List): List of current properties to extract
-        current_source_data (List): List with properties to edit
+        unrst_file (str): Path to UNRST file
+
+    Returns:
+        Tuple of (mole_frac_props, component_indices, has_zmf) where
+        component_indices is a list of 1-based int indices found (e.g. [1, 2, 3])
+        and has_zmf indicates whether ZMF properties were present.
     """
-    unrst = ResdataFile(unrst_file)
-    suffix_count = 1
-    review_z = True
-    while suffix_count < 50:
-        tmp_x = try_prop(unrst, "XMF" + str(suffix_count))
-        tmp_y = try_prop(unrst, "YMF" + str(suffix_count))
-        tmp_z = try_prop(unrst, "ZMF" + str(suffix_count))
-        if suffix_count == 1 and tmp_z is None:
-            review_z = False
-        if tmp_x is None and tmp_y is None:
+    unrst_props = xtgeo.list_gridproperties(unrst_file)
+    has_zmf = "ZMF1" in unrst_props
+    component_indices: List[int] = []
+    mole_frac_props = []
+    for suffix_count in range(1, 51):
+        tmp_x = f"XMF{suffix_count}" in unrst_props
+        tmp_y = f"YMF{suffix_count}" in unrst_props
+        tmp_z = f"ZMF{suffix_count}" in unrst_props
+        if not tmp_x and not tmp_y:
+            # Neither XMFi nor YMFi found, assume no more components
             break
-        if review_z:
-            if (tmp_x is None) != (tmp_y is None) or (tmp_z is None) != (tmp_y is None):
+        if has_zmf:
+            if not (tmp_x == tmp_y == tmp_z):
                 error_text = (
                     "Error: Number of components with XMF property differ from "
-                    "the number of components with YMF"
+                    "the number of components with YMF or ZMF"
                 )
                 raise ValueError(format_error(error_text))
-            else:
-                current_source_data.extend(
-                    [
-                        (
-                            name + str(suffix_count),
-                            Optional[Dict[str, np.ndarray]],
-                            None,
-                        )
-                        for name in ["XMF", "YMF", "ZMF"]
-                    ]
-                )
-                props_to_extract.extend(
-                    [name + str(suffix_count) for name in ["XMF", "YMF", "ZMF"]]
-                )
+            mole_frac_props.extend(
+                [name + str(suffix_count) for name in ["XMF", "YMF", "ZMF"]]
+            )
         else:
-            if (tmp_x is None) != (tmp_y is None):
+            if not (tmp_x == tmp_y):
                 error_text = (
                     "Error: Number of components with XMF property differ from "
                     "the number of components with YMF"
                 )
                 raise ValueError(format_error(error_text))
-            else:
-                current_source_data.extend(
-                    [
-                        (
-                            name + str(suffix_count),
-                            Optional[Dict[str, np.ndarray]],
-                            None,
-                        )
-                        for name in ["XMF", "YMF"]
-                    ]
-                )
-                props_to_extract.extend(
-                    [name + str(suffix_count) for name in ["XMF", "YMF"]]
-                )
-        suffix_count += 1
-    return current_source_data, props_to_extract
+            mole_frac_props += [f"XMF{suffix_count}", f"YMF{suffix_count}"]
+        component_indices.append(suffix_count)
+    return mole_frac_props, component_indices, has_zmf
 
 
 def _n_components(active_props: List):
@@ -375,7 +408,7 @@ def _n_components(active_props: List):
 
 
 def _compute_phases_avg_mol_weight(
-    source_data,
+    source_data: SourceData,
     comp_molar_masses: Optional[Dict[str, Tuple[int, float]]],
     water_molar_mass: float = DEFAULT_WATER_MOLAR_MASS,
 ):
@@ -393,8 +426,8 @@ def _compute_phases_avg_mol_weight(
         gas_avg_mol_weight_at_date = {}
         oil_avg_mol_weight_at_date = {}
         for idx, molar_mass in comp_molar_masses.values():
-            ymf_tmp_date = getattr(source_data, f"YMF{idx}")[date]
-            xmf_tmp_date = getattr(source_data, f"XMF{idx}")[date]
+            ymf_tmp_date = source_data.ymfs[idx][date]
+            xmf_tmp_date = source_data.xmfs[idx][date]
             gas_avg_mol_weight_at_date[idx] = molar_mass * ymf_tmp_date
             oil_avg_mol_weight_at_date[idx] = (
                 molar_mass * xmf_tmp_date if Scenario.DEPLETED_OIL_GAS_FIELD else None
@@ -418,7 +451,7 @@ def _compute_phases_avg_mol_weight(
 
 
 def _convert_phase_density_from_mass_to_mole(
-    source_data,
+    source_data: SourceData,
     comp_molar_masses: Optional[Dict[str, Tuple[int, float]]],
     water_molar_mass: float = DEFAULT_WATER_MOLAR_MASS,
 ):
@@ -429,6 +462,9 @@ def _convert_phase_density_from_mass_to_mole(
     dwat = source_data.DWAT
     dgas = source_data.DGAS
     doil = source_data.DOIL
+    assert dwat is not None
+    assert dgas is not None
+    assert doil is not None
     bwat = {}
     bgas = {}
     boil = {}
@@ -443,35 +479,39 @@ def _convert_phase_density_from_mass_to_mole(
     return bwat, bgas, boil
 
 
-def _find_props_to_extract(unrst_file: str, residual_trapping: bool):
+def _find_props_to_extract(
+    unrst_file: str, residual_trapping: bool
+) -> Tuple[List[str], List[int], bool]:
+    """Return (props_to_extract, component_indices, has_zmf)."""
     props_to_extract = copy.deepcopy(RELEVANT_PROPERTIES)
-    current_source_data = copy.deepcopy(source_data_)
-    source_data_updated, props_to_extract = _detect_eclipse_mole_fraction_props(
-        unrst_file, props_to_extract, current_source_data
+    mole_frac_props, component_indices, has_zmf = _detect_eclipse_mole_fraction_props(
+        unrst_file
     )
+    props_to_extract.extend(mole_frac_props)
     if residual_trapping:
         props_to_extract.extend(["SGSTRAND", "SGTRH"])
-
-    return source_data_updated, props_to_extract
+    return props_to_extract, component_indices, has_zmf
 
 
 # pylint: disable=too-many-arguments
 def _extract_source_data(
     grid_file: str,
     unrst_file: str,
-    source_data_updated: Iterable[Union[str, Tuple[str, type], Tuple[str, type, Any]]],
+    component_indices: List[int],
+    has_zmf: bool,
     props_to_extract: List[str],
     zone_info: ZoneInfo,
     region_info: RegionInfo,
     init_file: Optional[str] = None,
-):
+) -> tuple[SourceData, float | None]:
     # pylint: disable=too-many-locals, too-many-statements
     """Extracts the properties in props_to_extract from Grid files
 
     Args:
       grid_file (str): Path to EGRID-file
       unrst_file (str): Path to UNRST-file
-      source_data_updated: Source data with properties to be extracted
+      component_indices (List[int]): 1-based indices of XMF/YMF(/ZMF) components found
+      has_zmf (bool): Whether ZMF properties were present in the UNRST file
       props_to_extract (List): Names of the properties to be extracted
       init_file (str): Path to INIT-file
       zone_info (ZoneInfo): Zone information
@@ -482,66 +522,193 @@ def _extract_source_data(
 
     """
     logging.info("Start extracting source data\n")
-    grid = Grid(grid_file)
-    unrst = ResdataFile(unrst_file)
+    grid_handler = GridHandler(Path(grid_file), Path(unrst_file))
+    unrst_names = [p for p in props_to_extract if p in grid_handler.property_names]
 
-    try:
-        init = ResdataFile(init_file)
-    except Exception:
-        init = None
+    init: xtgeo.GridProperties | None = None
+    if init_file is not None:
+        try:
+            # Extract everything from the init file. This is (probably) small
+            # amounts of data compared to the dynamic part
+            init = xtgeo.gridproperties_from_file(
+                init_file, grid=grid_handler.grid, names="all"
+            )
+        except Exception:
+            init = None
+    if init is None:
         logging.info(format_warning("No INIT-file loaded"))
-    properties, dates = fetch_properties(unrst, props_to_extract)
 
-    active, gasless = find_active_and_gasless_cells(grid, properties, True)
-    global_active_idx = active[~gasless]
+    # Determine reduced set of active cells based on actnum and gasless cells
+    dissolved_props = [d for d in ["AMFS", "AMFG", "XMF2"] if d in unrst_names]
+    if len(dissolved_props) == 0 or "SGAS" not in unrst_names:
+        error_text = (
+            "CO2 containment calculation failed. "
+            "Cannot find required properties SGAS+AMFG, SGAS+XMF2 or SGAS+AMFS"
+        )
+        raise RuntimeError(format_error(error_text))
 
-    props_reduced = reduce_properties(properties, ~gasless)
+    unrst_props = grid_handler.read_properties(names=unrst_names, dates="all")
+    gasless = identify_gas_less_cells_from_iterator(
+        (p.values for p in unrst_props.props if p.name.startswith("SGAS")),
+        (p.values for p in unrst_props.props if p.name.startswith(dissolved_props[0])),
+    )
+    # TODO: whenever active cells are used in general, make
+    # sure that they are bool in type, otherwise, unexpected
+    # bugs can occur due to numpy treating non-bool arrays as
+    # indices. Add assertions everywhere?
+    active_cells = grid_handler.grid.actnum_array.astype(bool) & ~gasless
+
+    dates = list(
+        dict.fromkeys(unrst_props.dates)
+    )  # preserve order, but remove duplicates
+    extracted_names = unrst_names
+    # dict[property][date] with only active and non-gasless cells
+    props_reduced: dict[str, dict[str, np.ndarray]] = {p: {} for p in extracted_names}
+    for prop in unrst_props.props:
+        parts = prop.name.split("--")
+        if len(parts) == 1:
+            pname = prop.name
+            pdate = prop.date
+        else:
+            pname = parts[0]
+            # Prefer prop.date, but fall back to parsing from the name if not present
+            pdate = prop.date or parts[1]
+        if pname not in props_reduced:
+            continue
+        # .values is a masked array. actnum should correspond to the mask, but
+        # "active_cells" also include gas-less cells, so we'll use that instead
+        props_reduced[pname][pdate] = prop.values[active_cells].data
+
+    # Warn about missing data for any dates
+    missing: list[tuple[str, str]] = []
+    for d in dates:
+        for prop in extracted_names:
+            if d not in props_reduced[prop]:
+                missing.append((prop, d))
+    if missing:
+        missing_str = ", ".join([f"{prop} ({d})" for prop, d in missing])
+        logging.warning(
+            format_warning(
+                f"WARNING: The following date-property pairs are missing: {missing_str}"
+            )
+        )
+
     log_saturation_summaries(props_reduced)
     # Tuple with (x,y,z) for each cell:
-    xyz = [grid.get_xyz(global_index=a) for a in global_active_idx]
-    cells_x = np.array([coord[0] for coord in xyz])
-    cells_y = np.array([coord[1] for coord in xyz])
+    xp, yp, _ = grid_handler.grid.get_xyz()
+    cells_x = xp.values[active_cells].data
+    cells_y = yp.values[active_cells].data
 
-    zone = _process_zones(zone_info, grid, grid_file, global_active_idx)
-    region = _process_regions(region_info, grid, grid_file, init, active, gasless)
-    vol0 = [grid.cell_volume(global_index=x) for x in global_active_idx]
+    zone = _process_zones(zone_info, grid_handler.grid, active_cells)
+    region = _process_regions(region_info, grid_handler.grid, init, active_cells)
+    vol = grid_handler.grid.get_bulk_volume().values[active_cells]
     try:
-        cell_size = np.median(vol0)
-        cell_dims = [grid.get_cell_dims(global_index=x) for x in global_active_idx]
-        _log_grid_cell_dimensions(vol0, cell_dims)
+        cell_size = np.median(vol)
+        dx = grid_handler.grid.get_dx().values[active_cells].data
+        dy = grid_handler.grid.get_dy().values[active_cells].data
+        dz = grid_handler.grid.get_dz().values[active_cells].data
+        _log_grid_cell_dimensions(vol, dx, dy, dz)
     except Exception as e:
         logging.info(format_warning(f"WARNING: Could not compute grid cell size: {e}"))
         cell_size = None
 
-    props_reduced["VOL"] = {d: vol0 for d in dates}
+    props_reduced["VOL"] = {d: vol for d in dates}
     if init is not None:
-        try:
-            porv = init["PORV"]
-            props_reduced["PORV"] = {
-                d: porv[0].numpy_copy()[global_active_idx] for d in dates
-            }
-        except KeyError:
-            pass
-    SourceData = make_dataclass("SourceData", source_data_updated)
+        porv = init.get_prop_by_name("PORV")
+        if not grid_handler.has_lgr:
+            if porv is not None:
+                props_reduced["PORV"] = {
+                    d: porv.values[active_cells].data for d in dates
+                }
+        elif "RPORV" not in props_reduced:
+            # Grids with LGRs will not have valid PORV values for the cells
+            # affected by LGR. For Cirrus, these cells will have a value of 1.0
+            # (we believe), but other simulators are unclear. In any case,
+            # we override these values with PORV calculated from PORO and
+            # bulk. The exception is if RPORV is already present, in which case
+            # we don't need PORV.
+            # TODO: inform users that LGR porv values have been inferred.
+            poro = init.get_prop_by_name("PORO")
+            porv = init.get_prop_by_name("PORV")
+            if poro is not None and porv is not None:
+                poro_vals = poro.values[active_cells].data
+                porv_vals = porv.values[active_cells].data
+                porv_proxy = np.where(porv_vals == 1.0, poro_vals * vol, porv_vals)
+                props_reduced["PORV"] = {d: porv_proxy for d in dates}
+    # Infer SOIL from SGAS and SWAT if not stored in the file.
+    # Some simulators (e.g. Eclipse compositional with 3 phases) store SGAS and
+    # SWAT but not SOIL. SOIL = 1 - SGAS - SWAT in those cases, and its presence
+    # is needed to detect the DEPLETED_OIL_GAS_FIELD scenario.
+    if (
+        "SOIL" not in props_reduced
+        and "SGAS" in props_reduced
+        and "SWAT" in props_reduced
+    ):
+        tol = 1e-6
+        soil: dict[str, np.ndarray] = {}
+        for d in dates:
+            if d in props_reduced["SGAS"] and d in props_reduced["SWAT"]:
+                soil[d] = np.maximum(
+                    0.0, 1.0 - props_reduced["SGAS"][d] - props_reduced["SWAT"][d]
+                )
+        max_soil = max((v.max() for v in soil.values()), default=0.0)
+        if max_soil > tol:
+            props_reduced["SOIL"] = soil
+            logging.info(
+                "Oil Saturation (SOIL) not found as property."
+                "\nHowever, SGAS + SWAT != 1 somewhere, so SOIL has been inferred"
+                " as 1 - SGAS - SWAT."
+            )
+        else:
+            logging.info(
+                "Oil Saturation is zero everywhere. Two-phase scenario is assumed."
+            )
+
+    # Separate the indexed mole-fraction props from the static ones
+    xmfs = {
+        i: props_reduced.pop(f"XMF{i}")
+        for i in component_indices
+        if f"XMF{i}" in props_reduced
+    }
+    ymfs = {
+        i: props_reduced.pop(f"YMF{i}")
+        for i in component_indices
+        if f"YMF{i}" in props_reduced
+    }
+    zmfs = (
+        {
+            i: props_reduced.pop(f"ZMF{i}")
+            for i in component_indices
+            if f"ZMF{i}" in props_reduced
+        }
+        if has_zmf
+        else {}
+    )
     source_data = SourceData(
         cells_x,
         cells_y,
+        active_cells,
         dates,
         **dict(props_reduced.items()),
         zone=zone,
         region=region,
+        xmfs=xmfs,
+        ymfs=ymfs,
+        zmfs=zmfs,
     )
     logging.info("\nDone extracting source data\n")
     return source_data, cell_size
 
 
-def _log_grid_cell_dimensions(vol0: list, cell_dims: list) -> None:
+def _log_grid_cell_dimensions(
+    vol0: list, dx: np.ndarray, dy: np.ndarray, dz: np.ndarray
+) -> None:
     vol0_scaled = np.array(vol0) / 1000.0
 
     dimensions = [
-        ("dx (m)", np.array([dim[0] for dim in cell_dims])),
-        ("dy (m)", np.array([dim[1] for dim in cell_dims])),
-        ("dz (m)", np.array([dim[2] for dim in cell_dims])),
+        ("dx (m)", dx),
+        ("dy (m)", dy),
+        ("dz (m)", dz),
         ("vol (1000 m^3)", vol0_scaled),
     ]
 
@@ -567,116 +734,93 @@ def _log_grid_cell_dimensions(vol0: list, cell_dims: list) -> None:
 
 def _check_grid_dimensions(
     roff_file: str,
-    grid_file: str,
-    nx: int,
-    ny: int,
-    nz: int,
+    grid: xtgeo.Grid,
 ) -> None:
-    grid_shape = (nx, ny, nz)
     roff_grid = xtgeo.gridproperty_from_file(roff_file)
     roff_shape = roff_grid.values.shape
-    if roff_shape != grid_shape:
+    if roff_shape != grid.dimensions:
         err = f"Inconsistent grid dimensions {roff_shape} from file {roff_file}"
-        err += f" and {grid_shape} from file {grid_file}."
+        err += f" and {grid.dimensions} from file {grid.filesrc}."
         raise ValueError(format_error(err))
 
 
 def _process_zones(
     zone_info: ZoneInfo,
-    grid: Grid,
-    grid_file: str,
-    global_active_idx: np.ndarray,
+    grid: xtgeo.Grid,
+    active_cells: np.ndarray,
 ) -> Optional[np.ndarray]:
     zone = None
     if zone_info.source is None:
         logging.info("No zone info specified")
+        return None
+    logging.info("Using zone info")
+    if zone_info.zranges is not None:
+        zone_array = np.zeros(grid.dimensions, dtype=int)
+        zonevals = [int(x) for x in range(len(zone_info.zranges))]
+        zone_info.int_to_zone = [f"Zone_{x}" for x in range(len(zonevals))]
+        for zv, zr, zn in zip(
+            zonevals,
+            list(zone_info.zranges.values()),
+            zone_info.zranges.keys(),
+        ):
+            zone_array[:, :, zr[0] - 1 : zr[1]] = zv
+            zone_info.int_to_zone[zv] = zn
+        return zone_array[active_cells]
     else:
-        logging.info("Using zone info")
-        if zone_info.zranges is not None:
-            zone_array = np.zeros(
-                (grid.get_nx(), grid.get_ny(), grid.get_nz()), dtype=int
+        _check_grid_dimensions(zone_info.source, grid)
+        zone = xtgeo.gridproperty_from_file(zone_info.source, grid=grid)
+        try:
+            zone_name_dict = zone.codes
+            zone_values = list(zone_name_dict.keys())
+        except AttributeError:
+            zone_name_dict = {}
+            zone_values = []
+        zonevals = list(np.unique(zone.values[~zone.values.mask]))
+        intvals = np.array(zonevals, dtype=int)
+        if np.sum(intvals == zonevals) != len(zonevals):
+            warning_text = (
+                "Warning: Grid provided in zone file contains non-integer values. "
+                "This might cause problems with the calculations for "
+                "containment in different zones."
             )
-            zonevals = [int(x) for x in range(len(zone_info.zranges))]
-            zone_info.int_to_zone = [f"Zone_{x}" for x in range(len(zonevals))]
-            for zv, zr, zn in zip(
-                zonevals,
-                list(zone_info.zranges.values()),
-                zone_info.zranges.keys(),
-            ):
-                zone_array[:, :, zr[0] - 1 : zr[1]] = zv
-                zone_info.int_to_zone[zv] = zn
-            zone = zone_array.flatten(order="F")[global_active_idx]
-        else:
-            xtg_grid = xtgeo.grid_from_file(grid_file)
-            _check_grid_dimensions(
-                zone_info.source,
-                grid_file,
-                xtg_grid.ncol,
-                xtg_grid.nrow,
-                xtg_grid.nlay,
-            )
-            zone = xtgeo.gridproperty_from_file(zone_info.source, grid=xtg_grid)
-            try:
-                zone_name_dict = zone.codes
-                zone_values = list(zone_name_dict.keys())
-            except AttributeError:
-                zone_name_dict = {}
-                zone_values = []
-            zone = zone.values.data.flatten(order="F")
-            zonevals = list(np.unique(zone))
-            intvals = np.array(zonevals, dtype=int)
-            if np.sum(intvals == zonevals) != len(zonevals):
-                warning_text = (
-                    "Warning: Grid provided in zone file contains non-integer values. "
-                    "This might cause problems with the calculations for "
-                    "containment in different zones."
-                )
-                logging.info(format_warning(warning_text))
-            zone_info.int_to_zone = [None] * (np.max(intvals) + 1)
-            for zv in intvals:
-                if zv >= 0:
-                    if zv in zone_values:
-                        zone_info.int_to_zone[zv] = zone_name_dict[zv]
-                    else:
-                        zone_info.int_to_zone[zv] = f"Zone_{zv}"
-                        logging.info(
-                            f"Value {zv} in roff-grid not found in Codes."
-                            f" Using generic zone name Zone_{zv}."
-                        )
+            logging.info(format_warning(warning_text))
+        zone_info.int_to_zone = [None] * (np.max(intvals) + 1)
+        for zv in intvals:
+            if zv >= 0:
+                if zv in zone_values:
+                    zone_info.int_to_zone[zv] = zone_name_dict[zv]
                 else:
-                    logging.info("Ignoring negative value in grid from zone file.")
-            zone = np.array(zone[global_active_idx], dtype=int)
-    return zone
+                    zone_info.int_to_zone[zv] = f"Zone_{zv}"
+                    logging.info(
+                        f"Value {zv} in roff-grid not found in Codes."
+                        f" Using generic zone name Zone_{zv}."
+                    )
+            else:
+                logging.info("Ignoring negative value in grid from zone file.")
+        return zone.values.data[active_cells]
 
 
 def _process_regions(
     region_info: RegionInfo,
-    grid: Grid,
-    grid_file: str,
-    init: Optional[ResdataFile],
+    grid: xtgeo.Grid,
+    init: xtgeo.GridProperties | None,
     active: np.ndarray,
-    gasless: np.ndarray,
 ) -> Optional[np.ndarray]:
     region = None
     if region_info.source is not None:
         logging.info("Using regions info")
-        xtg_grid = xtgeo.grid_from_file(grid_file)
         _check_grid_dimensions(
             region_info.source,
-            grid_file,
-            xtg_grid.ncol,
-            xtg_grid.nrow,
-            xtg_grid.nlay,
+            grid,
         )
-        region = xtgeo.gridproperty_from_file(region_info.source, grid=xtg_grid)
+        region = xtgeo.gridproperty_from_file(region_info.source, grid=grid)
         try:
             region_name_dict = region.codes
             region_values = list(region_name_dict.keys())
         except AttributeError:
             region_name_dict = {}
             region_values = []
-        region = region.values.data.flatten(order="F")
-        regvals = np.unique(region)
+        regvals = np.unique(region.values.data[~region.values.mask])
         intvals = np.array(regvals, dtype=int)
         if np.sum(intvals == regvals) != len(regvals):
             warning_text = (
@@ -698,7 +842,7 @@ def _process_regions(
                     )
             else:
                 logging.info("Ignoring negative value in grid from region file.")
-        region = np.array(region[active[~gasless]], dtype=int)
+        return np.array(region[active], dtype=int)
     elif region_info.property_name is not None:
         if init is None:
             logging.info("No INIT-file to use for region information.")
@@ -710,9 +854,16 @@ def _process_regions(
                     f"Try reading region information ({region_info.property_name}"
                     f" property) from INIT-file."
                 )
-                region = np.array(init[region_info.property_name][0], dtype=int)
-                if region.shape[0] == grid.get_nx() * grid.get_ny() * grid.get_nz():
-                    region = region[active]
+                region_prop = init.get_prop_by_name(region_info.property_name)
+                if region_prop is None or region_prop.dimensions != grid.dimensions:
+                    logging.info(
+                        "Warning: Failed to use region property in INIT-file has due"
+                        " to either different dimensions or a missing property."
+                    )
+                    region_info.int_to_region = None
+                    return None
+
+                region = region_prop.values[active]
                 regvals = np.unique(region)
                 region_info.int_to_region = [None] * (np.max(regvals) + 1)
                 for rv in regvals:
@@ -723,7 +874,6 @@ def _process_regions(
                             f"Ignoring negative value in {region_info.property_name}."
                         )
                 logging.info("Region information successfully read from INIT-file")
-                region = region[~gasless]
             except KeyError:
                 logging.info(
                     format_warning("Region information not found in INIT-file.")
@@ -791,7 +941,7 @@ def _set_calc_type_from_input_string(calc_type_input: str) -> CalculationType:
 
 
 def _cirrus_co2mass(
-    source_data,
+    source_data: SourceData,
     scenario: Scenario,
     pore_volume_prop: str,
     co2_molar_mass: float = DEFAULT_CO2_MOLAR_MASS,
@@ -835,11 +985,13 @@ def _cirrus_co2mass(
     swat = source_data.SWAT
     xmfo = source_data.XMFO
     if swat is None and scenario != Scenario.DEPLETED_OIL_GAS_FIELD:
+        assert sgas is not None
         # Only gas (co2 or hydrocarbon gas) and water => sgas + swat = 1
         swat = {key: 1 - sgas[key] for key in sgas}
     if xmfw is None and scenario == Scenario.DEPLETED_OIL_GAS_FIELD:
         # Assume g = hydrocarbon gas, s = co2, o = oil
         # => The remainder must be the mole fraction for water
+        assert xmfg is not None and xmfs is not None and xmfo is not None
         xmfw = {key: 1 - xmfg[key] - xmfs[key] - xmfo[key] for key in xmfg}
     sgstrand = source_data.SGSTRAND
     eff_vols = source_data.RPORV if pore_volume_prop == "RPORV" else source_data.PORV
@@ -848,6 +1000,11 @@ def _cirrus_co2mass(
         scenario, amfg, amfs, amfw, ymfg, ymfs, ymfw, xmfs, xmfw, xmfg
     )
 
+    assert eff_vols is not None
+    assert swat is not None
+    assert dwat is not None
+    assert sgas is not None
+    assert dgas is not None
     co2_mass = {}
     for date in dates:
         co2_mass[date] = [
@@ -877,6 +1034,7 @@ def _cirrus_co2mass(
             ),
         ]
         if scenario == Scenario.DEPLETED_OIL_GAS_FIELD:
+            assert doil is not None
             co2_mass[date].extend(
                 [
                     eff_vols[date]
@@ -929,12 +1087,12 @@ def _cirrus_co2mass(
 
 
 def _compositional_co2mass(
-    source_data,
+    source_data: SourceData,
     scenario: Scenario,
     source: str,
     pore_volume_prop: str,
     co2_molar_mass: Optional[float] = None,
-    co2_position: Optional[float] = None,
+    co2_position: Optional[int] = None,
 ) -> Dict[str, List[np.ndarray]]:
     """
     Calculates CO2 mass based on molar weight and mole fraction of the components
@@ -962,17 +1120,21 @@ def _compositional_co2mass(
     eff_vols = source_data.RPORV if pore_volume_prop == "RPORV" else source_data.PORV
     conv_fact = co2_molar_mass
     if co2_position is not None and source == "Cirrus COMP":
-        xmf_co2 = getattr(source_data, f"XMF{co2_position}")
-        ymf_co2 = getattr(source_data, f"YMF{co2_position}")
+        xmf_co2 = source_data.xmfs[co2_position]
+        ymf_co2 = source_data.ymfs[co2_position]
     else:
-        xmf_co2 = source_data.XMF2
-        ymf_co2 = source_data.YMF2
+        xmf_co2 = source_data.xmfs[2]
+        ymf_co2 = source_data.ymfs[2]
     phase_moles = {}
     co2_mass = {}
+    assert eff_vols is not None
+    assert bgas is not None
+    assert sgas is not None
+    assert bwat is not None
     for date in dates:
         phase_moles[date] = [
             (
-                bwat[date] * swat[date] * eff_vols[date]
+                bwat[date] * swat[date] * eff_vols[date]  # type: ignore[index]
                 if scenario == Scenario.DEPLETED_OIL_GAS_FIELD
                 else bwat[date] * (1 - sgas[date]) * eff_vols[date]
             ),
@@ -987,10 +1149,12 @@ def _compositional_co2mass(
             ]
         else:
             zmf_co2 = (
-                getattr(source_data, f"ZMF{co2_position}")
+                source_data.zmfs[co2_position]
                 if co2_position is not None and source == "Cirrus COMP"
-                else source_data.ZMF2
+                else source_data.zmfs[2]
             )
+            assert boil is not None
+            assert soil is not None
             phase_moles[date].extend([boil[date] * soil[date] * eff_vols[date]])
             total_moles = (
                 phase_moles[date][0] + phase_moles[date][1] + phase_moles[date][2]
@@ -1004,6 +1168,7 @@ def _compositional_co2mass(
                 0, total_co2_mass - co2_mass[date][0] - co2_mass[date][1]
             )
         if any(x is not None for x in (sgstrand, sgtrh)):
+            assert sgtrh is not None
             co2_mass[date].extend(
                 [
                     np.divide(
@@ -1197,7 +1362,7 @@ def _cirrus_co2_molar_volume(
 
 
 def _eclipse_co2_molar_volume(
-    source_data,
+    source_data: SourceData,
     water_density: np.ndarray,
     water_molar_mass: float = DEFAULT_WATER_MOLAR_MASS,
 ) -> Dict:
@@ -1217,8 +1382,8 @@ def _eclipse_co2_molar_volume(
     dates = source_data.DATES
     bgas = source_data.BGAS
     bwat = source_data.BWAT
-    xmf2 = source_data.XMF2
-    ymf2 = source_data.YMF2
+    xmf2 = source_data.xmfs[2]
+    ymf2 = source_data.ymfs[2]
     co2_molar_vol = {}
     for date in dates:
         co2_molar_vol[date] = [
@@ -1229,7 +1394,7 @@ def _eclipse_co2_molar_volume(
                         -water_molar_mass
                         * (1 - xmf2[date][x])
                         / (1000 * water_density[x])
-                        + 1 / (1000 * bwat[date][x])
+                        + 1 / (1000 * bwat[date][x])  # type: ignore[index]
                     )
                     if xmf2[date][x] >= THRESHOLD_DISSOLVED
                     else 0
@@ -1243,7 +1408,7 @@ def _eclipse_co2_molar_volume(
                         -water_molar_mass
                         * (1 - ymf2[date][x])
                         / (1000 * water_density[x])
-                        + 1 / (1000 * bgas[date][x])
+                        + 1 / (1000 * bgas[date][x])  # type: ignore[index]
                     )
                     if not ymf2[date][x] == 0
                     else 0
@@ -1334,7 +1499,7 @@ def _construct_mole_fractions(
 
 
 def _calculate_co2_data_from_source_data(
-    source_data,
+    source_data: SourceData,
     calc_type: CalculationType,
     co2_molar_mass: float = DEFAULT_CO2_MOLAR_MASS,
     water_molar_mass: float = DEFAULT_WATER_MOLAR_MASS,
@@ -1359,13 +1524,7 @@ def _calculate_co2_data_from_source_data(
       Co2Data
     """
     logging.info(f"Start calculating CO2 {calc_type.name.lower()} from source data")
-    props_check = [
-        x.name
-        for x in fields(source_data)
-        if x.name not in ["x_coord", "y_coord", "DATES", "zone", "region", "VOL"]
-    ]
-
-    active_props = [p for p in props_check if getattr(source_data, p) is not None]
+    active_props = source_data.active_property_names()
     if not is_subset(["SGAS"], active_props):
         error_text = "Lacking required property SGAS to compute CO2 mass/volume."
         raise ValueError(format_error(error_text))
@@ -1410,7 +1569,7 @@ def _calculate_co2_data_from_source_data(
             comp_molar_masses,
         )
     elif calc_type == CalculationType.CELL_VOLUME:
-        co2_amount = _calc_co2_amount_cell_volume(scenario, source_data, props_check)
+        co2_amount = _calc_co2_amount_cell_volume(scenario, source_data, active_props)
     else:
         error_text = "Illegal calculation type: " + calc_type.name
         error_text += "\nValid options:"
@@ -1492,7 +1651,7 @@ def _calc_co2_amount(
     scenario: Scenario,
     calc_type: CalculationType,
     residual_trapping: bool,
-    source_data,
+    source_data: SourceData,
     pore_volume_prop: str,
     co2_molar_mass: float,
     water_molar_mass: float,
@@ -1534,6 +1693,7 @@ def _calc_co2_amount(
     co2_mass_output = Co2Data(
         source_data.x_coord,
         source_data.y_coord,
+        source_data.active_cells,
         [
             Co2DataAtTimeStep(
                 key,
@@ -1592,6 +1752,7 @@ def _calc_co2_amount(
         co2_amount = Co2Data(
             source_data.x_coord,
             source_data.y_coord,
+            source_data.active_cells,
             [
                 Co2DataAtTimeStep(
                     t,
@@ -1623,7 +1784,7 @@ def _calc_co2_amount(
 def _calculate_molar_vols_co2(
     source: str,
     scenario: Scenario,
-    source_data,
+    source_data: SourceData,
     co2_molar_mass: float,
     water_molar_mass: float,
     gas_molar_mass: Optional[float],
@@ -1631,6 +1792,7 @@ def _calculate_molar_vols_co2(
 ):
     if source == "Cirrus":
         y_prop = source_data.AMFG if scenario == Scenario.AQUIFER else source_data.AMFS
+        assert y_prop is not None
         y = y_prop[source_data.DATES[0]]
         where_min_amf_co2 = np.where(y < THRESHOLD_DISSOLVED)[0]
         if len(where_min_amf_co2) == 0:
@@ -1645,6 +1807,7 @@ def _calculate_molar_vols_co2(
             )
             logging.warning(format_warning(msg))
         # Where amfg is 0, or the closest approximation available
+        assert source_data.DWAT is not None
         dwat = source_data.DWAT[source_data.DATES[0]]
         water_density = np.array(
             [
@@ -1656,9 +1819,11 @@ def _calculate_molar_vols_co2(
                 for x in enumerate(dwat)
             ]
         )
+        assert source_data.YMFG is not None
         y = source_data.YMFG[source_data.DATES[0]]
         max_y = np.max(y)
         where_max_ymfg = np.where(np.isclose(y, max_y))[0]
+        assert source_data.DGAS is not None
         dgas = source_data.DGAS[source_data.DATES[0]]
         gas_density = np.array(
             [
@@ -1668,9 +1833,11 @@ def _calculate_molar_vols_co2(
         )
         oil_density = np.ones_like(water_density)
         if scenario == Scenario.DEPLETED_OIL_GAS_FIELD:
+            assert source_data.YMFO is not None
             y = source_data.YMFO[source_data.DATES[0]]
             max_y = np.max(y)
             where_max_xmfo = np.where(np.isclose(y, max_y))[0]
+            assert source_data.DOIL is not None
             doil = source_data.DOIL[source_data.DATES[0]]
             oil_density = np.array(
                 [
@@ -1694,7 +1861,7 @@ def _calculate_molar_vols_co2(
             oil_molar_mass,
         )
     else:
-        y = source_data.XMF2[source_data.DATES[0]]
+        y = source_data.xmfs[2][source_data.DATES[0]]
         where_min_xmf2 = np.where(y < THRESHOLD_DISSOLVED)[0]
         if len(where_min_xmf2) == 0:
             min_y = np.min(y)
@@ -1707,6 +1874,7 @@ def _calculate_molar_vols_co2(
             )
             logging.warning(format_warning(msg))
         # Where xmf2 is 0, or the closest approximation available
+        assert source_data.BWAT is not None
         bwat = source_data.BWAT[source_data.DATES[0]]
         water_density = np.array(
             [
@@ -1728,22 +1896,35 @@ def _calculate_molar_vols_co2(
 
 def _calc_co2_amount_cell_volume(
     scenario: Scenario,
-    source_data,
-    props_check: List[str],
+    source_data: SourceData,
+    active_props: List[str],
 ) -> Co2Data:
-    props_idx = np.where([getattr(source_data, x) is not None for x in props_check])[0]
-    props_names = [props_check[i] for i in props_idx]
-    plume_props_names = [x for x in props_names if x in ["SGAS", "AMFG", "XMF2"]]
-    if scenario != Scenario.AQUIFER:
-        plume_props_names[plume_props_names.index("AMFG")] = "AMFS"
-    properties = {x: getattr(source_data, x) for x in plume_props_names}
+    # The definition of gas_prop and dis_prop is probably wrong since there
+    # is no guarantee that the gas property will come first. However, it most
+    # probably works out since the order of active_props is mostly the same for
+    # properly defined cases. Trying to change this will cause a test failure,
+    # so leaving as it is for now.
+    props = []
+    for p in active_props:
+        if p == "SGAS":
+            props.append(source_data.SGAS)
+        elif p == "AMFG":
+            props.append(
+                source_data.AMFS if scenario != Scenario.AQUIFER else source_data.AMFG
+            )
+        elif p == "XMF2":
+            props.append(source_data.xmfs[2])
+    gas_prop = props[0]
+    dis_prop = props[1] if len(props) >= 2 else None
+    assert gas_prop is not None
     inactive_gas_cells = {
         x: identify_gas_less_cells(
-            {x: properties[plume_props_names[0]][x]},
-            {x: properties[plume_props_names[1]][x]},
+            {x: gas_prop[x]},
+            {x: dis_prop[x]} if dis_prop is not None else None,
         )
         for x in source_data.DATES
     }
+    assert source_data.VOL is not None
     vols_ext = {t: np.array([0] * len(source_data.VOL[t])) for t in source_data.DATES}
     for date in source_data.DATES:
         vols_ext[date][~inactive_gas_cells[date]] = np.array(source_data.VOL[date])[
@@ -1752,6 +1933,7 @@ def _calc_co2_amount_cell_volume(
     co2_amount = Co2Data(
         source_data.x_coord,
         source_data.y_coord,
+        source_data.active_cells,
         [
             Co2DataAtTimeStep(
                 t,
@@ -1841,14 +2023,15 @@ def calculate_co2(
 
     """
     timer = Timer()
-    source_data_updated, props_to_extract = _find_props_to_extract(
+    props_to_extract, component_indices, has_zmf = _find_props_to_extract(
         unrst_file, residual_trapping
     )
     timer.start("extract_source_data")
     source_data, cell_size = _extract_source_data(
         grid_file,
         unrst_file,
-        source_data_updated,
+        component_indices,
+        has_zmf,
         props_to_extract,
         zone_info,
         region_info,

@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-import copy
 import logging
 import os
 import shutil
@@ -19,12 +18,9 @@ from ccs_scripts.aggregate._co2_mass import MapName, translate_co2data_to_proper
 from ccs_scripts.aggregate._config import AggregationMethod, RootConfig
 from ccs_scripts.aggregate._utils import log_input_configuration
 from ccs_scripts.co2_containment.co2_calculation import (
-    RELEVANT_PROPERTIES,
     RegionInfo,
     ZoneInfo,
-    _detect_eclipse_mole_fraction_props,
     calculate_co2,
-    source_data_,
 )
 from ccs_scripts.utils.timer import Timer
 from ccs_scripts.utils.utils import format_error, format_warning
@@ -63,25 +59,15 @@ def generate_co2_mass_maps(config_: RootConfig):
     )
 
     dates = config_.input.dates
-    all_dates = [x.date for x in co2_data.data_list]
-    dates_idx = list(range(len(all_dates)))
     if len(dates) > 0:
         co2_data.data_list = [x for x in co2_data.data_list if x.date in dates]
-        dates_idx = [i for i, val in enumerate(all_dates) if val in dates]
     grid_folder, delete_tmp_grid_folder = _process_grid_dir(config_.output.gridfolder)
     try:
-        properties_to_extract = copy.deepcopy(RELEVANT_PROPERTIES)
-        current_source_data = copy.deepcopy(source_data_)
-        _, properties_to_extract = _detect_eclipse_mole_fraction_props(
-            co2_mass_settings.unrst_source, properties_to_extract, current_source_data
-        )
         out_property_list = translate_co2data_to_property(
             co2_data,
             grid_file,
             co2_mass_settings,
             grid_folder,
-            properties_to_extract,
-            dates_idx,
         )
 
         co2_mass_property_to_map(
@@ -145,7 +131,7 @@ def clean_tmp(grid_folder: str):
 
 def co2_mass_property_to_map(
     config_: RootConfig,
-    out_property_list: List[Optional[str]],
+    out_property_list: List[str],
     co2_mass_settings: _config.CO2MassSettings,
     cell_size: Optional[float] = None,
 ):
@@ -164,14 +150,13 @@ def co2_mass_property_to_map(
     # Aggregate maps:
     config_.input.properties = []
     for props in out_property_list:
-        if isinstance(props, str):
-            config_.input.properties.append(
-                _config.Property(
-                    props,
-                    None,
-                    1e-6,  # 0.001 kg
-                )
+        config_.input.properties.append(
+            _config.Property(
+                props,
+                None,
+                1e-6,  # 0.001 kg
             )
+        )
     grid3d_aggregate_map.generate_from_config(config_)
 
     # Migration time maps:
