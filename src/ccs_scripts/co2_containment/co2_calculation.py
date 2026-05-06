@@ -330,7 +330,8 @@ def _extract_comp_molar_masses(
         row["Component"]: (i + 1, row["Value"]) for i, row in mw_df.iterrows()
     }
     if "CO2" not in molar_weights:
-        raise ValueError("CO2 molar mass not found in cirrus info file")
+        error_text = "CO2 molar mass not found in cirrus info file"
+        raise ValueError(format_error(error_text))
     return molar_weights
 
 
@@ -1645,6 +1646,15 @@ def _find_source_and_scenario(
         _raise_missing_props_error(
             active_props, props_needed_cirrus, props_needed_eclipse
         )
+    if scenario == Scenario.DEPLETED_OIL_GAS_FIELD:
+        required_oil_dens = "BOIL" if source == "Eclipse" else "DOIL"
+        if not is_subset([required_oil_dens], active_props):
+            error_text = (
+                f"Source: {source}"
+                f"\nScenario detected as DEPLETED_OIL_GAS_FIELD but "
+                f"{required_oil_dens} is missing.\n"
+            )
+            raise ValueError(format_error(error_text))
     return source, scenario
 
 
