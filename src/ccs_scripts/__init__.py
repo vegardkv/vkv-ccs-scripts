@@ -68,3 +68,55 @@
 #
 #     return logger
 #
+
+def _monkey_patch_scan_dates() -> None:
+    # Monkey-patch function
+    # Instead of reading data for each iteration, data is only read
+    # when it is used.
+    import pandas as pd
+    import resfo
+
+    print("Applying monkey-patch to xtgeo's scan_dates function")
+
+    def scan_dates_patch(
+        pfile,
+        maxdates: int,  # Dropped MAXDATES default since it is not needed in the patch
+        dataframe: bool = False,
+    ) -> list | pd.DataFrame:
+        """Quick scan dates in a simulation restart file.
+
+        Cf. grid_properties.py description
+        """
+        print("Invoking patched scan_dates function")
+        dates = []
+        seqnum = -1
+        for item in resfo.lazy_read(pfile.file):
+            kw = item.read_keyword().strip()
+
+            data = None
+            if kw == "SEQNUM":
+                data = item.read_array()
+                seqnum = data[0]
+                continue
+
+            # With LGRs multiple INTEHEADs may occur. Ensure we get the date
+            # from the first INTEHEAD after a SEQNUM.
+            if kw == "INTEHEAD" and seqnum != -1:
+                if data is None:
+                    data = item.read_array()
+                # Index 66 = year, 65 = month, 64 = day
+                date = int(f"{data[66]}{data[65]:02d}{data[64]:02d}")
+                dates.append((seqnum, date))
+                seqnum = -1
+
+        return (
+            pd.DataFrame.from_records(dates, columns=["SEQNUM", "DATE"])
+            if dataframe
+            else dates
+        )
+
+    from xtgeo.grid3d import _grid3d_utils
+    _grid3d_utils.scan_dates = scan_dates_patch
+
+
+_monkey_patch_scan_dates()
